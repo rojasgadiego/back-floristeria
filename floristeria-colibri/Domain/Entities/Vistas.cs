@@ -11,6 +11,10 @@ namespace Colibri.Api.Domain.Entities;
 /// Disponibilidad real de un producto. Para un armado: las unidades ya hechas
 /// más las que alcanzan a armarse con el stock de tallos, que es el mínimo
 /// entre todos sus ingredientes.
+///
+/// OJO con Disponible: desde que existe el mostrador es el TOTAL, cámara más
+/// frente. La flor del mesón no dejó de ser tuya, pero tampoco está toda
+/// vendible. Para el desglose por lado está vw_existencias.
 /// </summary>
 public class ProductoDisponible
 {
@@ -37,6 +41,28 @@ public class ProductoCosto
     public int ProductoId { get; set; }
     public int CostoUnitario { get; set; }
 }
+
+/// <summary>
+/// Existencias de un producto en un lado. Mapea vw_existencias.
+///
+/// Es la vista que permite mostrar el inventario partido en cámara y frente,
+/// que es la información con la que se decide qué bajar al mostrador.
+/// </summary>
+public class Existencia
+{
+    public int ProductoId { get; set; }
+
+    /// <summary>bodega o venta.</summary>
+    public Ubicacion Ubicacion { get; set; }
+
+    public int Disponible { get; set; }
+    public decimal ValorCosto { get; set; }
+
+    /// <summary>El vencimiento más cercano de ese lado. Null si nada vence.</summary>
+    public DateOnly? VenceAntes { get; set; }
+}
+
+/// <summary>Lo que devuelve fn_traspasar: una fila por lote tocado.</summary>
 
 /// <summary>De los ingresos a la utilidad, día por día.</summary>
 public class ResultadoDiario
@@ -67,12 +93,7 @@ public class CompromisoEvento
 /// <summary>
 /// Lotes con existencias, su antigüedad y su alerta.
 /// OrdenFifo dice en qué posición está el lote en la fila de consumo:
-/// el 1 es el que debería venderse ahora.
-/// </summary>
-/// <summary>
-/// Lotes con existencias, su antigüedad y su alerta.
-/// OrdenFifo dice en qué posición está el lote en la fila de consumo:
-/// el 1 es el que debería venderse ahora.
+/// el 1 es el que debería venderse ahora, y se numera DENTRO DE CADA LADO.
 /// </summary>
 public class LoteActivo
 {
@@ -96,7 +117,15 @@ public class LoteActivo
 
     public decimal CostoPorVara { get; set; }
     public int ValorRestante { get; set; }
+
+    /// <summary>Dónde está guardado: 'Cámara 1, balde 3'. Es una nota.</summary>
     public string? Ubicacion { get; set; }
+
+    /// <summary>
+    /// De qué lado está: bodega o venta. Distinto de Ubicacion, que es el
+    /// balde. Solo se puede vender lo que está en venta.
+    /// </summary>
+    public Ubicacion UbicacionInventario { get; set; }
 
     // --- Recuperación ---
 
@@ -130,7 +159,6 @@ public class LoteActivo
     public string Alerta { get; set; } = null!;
 }
 
-/// <summary>Flor recuperada disponible para vender, con su rebaja.</summary>
 /// <summary>
 /// Flor recuperada disponible para vender, con su rebaja.
 ///
@@ -191,14 +219,14 @@ public class ReingresoLote
     public DateOnly? FechaVencimiento { get; set; }
 }
 
-/// <summary>Costo promedio ponderado de lo que hay en cámara, por producto.</summary>
+/// <summary>Costo promedio ponderado del inventario, por producto.</summary>
 public class CostoPromedio
 {
     public int ProductoId { get; set; }
     public long Varas { get; set; }
     public int ValorTotal { get; set; }
 
-    [Column("costo_promedio")]   // ← acá
+    [Column("costo_promedio")]
     public decimal Costo { get; set; }
 }
 
@@ -218,9 +246,9 @@ public class EvolucionCosto
 }
 
 /// <summary>
-/// Fila que devuelve fn_consumir_lotes: de qué lote salió cada porción y a
-/// qué costo. No es una tabla ni una vista; se mapea sin clave para poder
-/// leer el resultado de la función.
+/// Fila que devuelve fn_consumir: de qué lote salió cada porción, a qué costo
+/// y a qué precio. No es una tabla ni una vista; se mapea sin clave para
+/// poder leer el resultado de la función.
 /// </summary>
 public class ConsumoLote
 {
@@ -228,6 +256,13 @@ public class ConsumoLote
     public string Codigo { get; set; } = null!;
     public int Cantidad { get; set; }
     public decimal CostoUnitario { get; set; }
+
+    /// <summary>
+    /// A qué precio se vende esa vara, resuelto en la base según precio
+    /// propio del lote, calidad y precio de lista.
+    /// </summary>
+    public int PrecioVenta { get; set; }
+
     public DateOnly FechaIngreso { get; set; }
 }
 
@@ -262,4 +297,3 @@ public class CotizacionSaldo
 
     public DateOnly? ProximoVencimiento { get; set; }
 }
-

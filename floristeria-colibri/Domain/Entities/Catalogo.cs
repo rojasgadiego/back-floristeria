@@ -1,3 +1,6 @@
+// Domain/Entities/Catalogo.cs  (o como se llame el archivo que tiene estas cinco)
+// Va completo: lo único que cambia es MovimientoInventario.Ubicacion.
+
 namespace Colibri.Api.Domain.Entities;
 
 public class Categoria
@@ -29,6 +32,15 @@ public class Producto
 
     // --- Solo productos simples ---
     public int? Costo { get; set; }
+
+    /// <summary>
+    /// Suma de los lotes activos, mantenida por un trigger. Escribirlo a mano
+    /// lo rechaza la base.
+    ///
+    /// Desde que existe el mostrador es el TOTAL: cámara más frente. La flor
+    /// del mesón no dejó de ser tuya, pero tampoco está toda vendible. Para el
+    /// desglose por lado está vw_existencias.
+    /// </summary>
     public int? Stock { get; set; }
 
     // --- Solo productos armados ---
@@ -36,9 +48,9 @@ public class Producto
     public int? CostoArmado { get; set; }
 
     /// <summary>
-    /// Las flores se controlan por lote: su Stock es la suma de los lotes
-    /// activos, mantenida por un trigger. Escribirlo a mano lo rechaza la base.
-    /// Un jarrón de vidrio no se muere y no necesita el seguimiento.
+    /// Las flores se controlan por lote. Un jarrón de vidrio no se muere y no
+    /// necesita el seguimiento: se vende directo del estante, sin pasar por el
+    /// mostrador.
     /// </summary>
     public bool ControlaLotes { get; set; }
 
@@ -91,6 +103,16 @@ public class MovimientoInventario
 
     public TipoMovimiento Tipo { get; set; }
 
+    /// <summary>
+    /// De qué lado ocurrió: bodega o mostrador.
+    ///
+    /// Sin esto un traspaso se ve igual que una salida, y la suma de
+    /// movimientos por ubicación deja de cuadrar con las existencias de esa
+    /// ubicación —que es justamente la consulta con la que se audita cuando
+    /// algo no calza.
+    /// </summary>
+    public Ubicacion Ubicacion { get; set; } = Ubicacion.bodega;
+
     /// <summary>Con signo: negativo cuando el producto sale.</summary>
     public int Cantidad { get; set; }
 
@@ -122,7 +144,6 @@ public class Merma
     public string Motivo { get; set; } = null!;
     public string? Detalle { get; set; }
 
-
     /// <summary>
     /// Qué pasó con lo que salió. Una devolución al proveedor mueve
     /// inventario pero no es pérdida: la mercadería se abona.
@@ -147,7 +168,6 @@ public class Merma
     /// valiendo $400 deja $300 de pérdida reconocida en ese momento.
     /// </summary>
     public int? CostoRecuperadoUnitario { get; set; }
-
 
     /// <summary>
     /// El costo se congela al registrar la merma: si el proveedor sube el

@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\Dieg0\\source\\repos\\floristeria-colibri\\floristeria-colibri\\floristeria-colibri.csproj": {}
+    "C:\\Users\\Dieg0\\Desktop\\back-floristeria\\floristeria-colibri\\floristeria-colibri.csproj": {}
   },
   "projects": {
-    "C:\\Users\\Dieg0\\source\\repos\\floristeria-colibri\\floristeria-colibri\\floristeria-colibri.csproj": {
+    "C:\\Users\\Dieg0\\Desktop\\back-floristeria\\floristeria-colibri\\floristeria-colibri.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\Dieg0\\source\\repos\\floristeria-colibri\\floristeria-colibri\\floristeria-colibri.csproj",
+        "projectUniqueName": "C:\\Users\\Dieg0\\Desktop\\back-floristeria\\floristeria-colibri\\floristeria-colibri.csproj",
         "projectName": "floristeria-colibri",
-        "projectPath": "C:\\Users\\Dieg0\\source\\repos\\floristeria-colibri\\floristeria-colibri\\floristeria-colibri.csproj",
+        "projectPath": "C:\\Users\\Dieg0\\Desktop\\back-floristeria\\floristeria-colibri\\floristeria-colibri.csproj",
         "packagesPath": "C:\\Users\\Dieg0\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\Dieg0\\source\\repos\\floristeria-colibri\\floristeria-colibri\\obj\\",
+        "outputPath": "C:\\Users\\Dieg0\\Desktop\\back-floristeria\\floristeria-colibri\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -100,7 +100,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.302/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.305/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

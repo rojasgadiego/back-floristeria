@@ -38,11 +38,16 @@ public class LotesService : ILotesService
     /// calcula el orden FIFO con una función de ventana y la alerta: hacerlo
     /// en C# obligaría a traerse todos los lotes de cada producto para
     /// numerarlos.
+    ///
+    /// Por defecto muestra BODEGA. Esta pantalla es la cámara; lo que está
+    /// adelante tiene su propia vista, y mezclarlos haría que un mismo lote
+    /// apareciera dos veces —el padre y su partida— sin que se entienda por qué.
     /// </summary>
     public async Task<ResultadoPagina<LoteDto>> ListarActivosAsync(
         LoteFiltro filtro, CancellationToken ct = default)
     {
-        var consulta = ProyectarActivos();
+        var ubicacion = filtro.Ubicacion ?? Ubicacion.bodega;
+        var consulta = ProyectarActivos(ubicacion);
 
         if (!string.IsNullOrWhiteSpace(filtro.Buscar))
         {
@@ -60,12 +65,16 @@ public class LotesService : ILotesService
             consulta = consulta.Where(l => l.Alerta == filtro.Alerta.Trim().ToLower());
 
         // Rezagado: es el primero de la fila FIFO, ya empezado, y hay lotes
-        // más nuevos esperando detrás.
+        // más nuevos esperando detrás. La comparación es dentro del mismo
+        // lado: un lote de cámara no está "rezagado" porque haya partidas
+        // más nuevas en el mostrador.
         if (filtro.SoloRezagados)
             consulta = consulta.Where(l =>
                 l.OrdenFifo == 1 &&
                 l.VarasDisponibles < l.VarasIniciales &&
-                _db.LotesActivos.Any(o => o.ProductoId == l.ProductoId && o.Id != l.Id));
+                _db.LotesActivos.Any(o => o.ProductoId == l.ProductoId
+                                       && o.UbicacionInventario == ubicacion
+                                       && o.Id != l.Id));
 
         var total = await consulta.CountAsync(ct);
         var items = await consulta
@@ -101,7 +110,8 @@ public class LotesService : ILotesService
             VarasDisponibles = l.VarasDisponibles,
             VarasConsumidas = l.VarasIniciales - l.VarasDisponibles,
             CostoPorVara = l.CostoPorVara,
-            Ubicacion = l.Ubicacion,
+            Ubicacion = l.UbicacionFisica,                 // el balde, no el lado
+            UbicacionInventario = l.Ubicacion.ToString(),  // bodega o venta
             Alerta = l.Estado.ToString()
         });
 
@@ -165,6 +175,7 @@ public class LotesService : ILotesService
                 l.VarasDisponibles,
                 l.CostoPorVara,
                 l.Estado,
+                l.UbicacionFisica,
                 l.Ubicacion,
                 l.Notas,
                 l.CompraId,
@@ -219,7 +230,8 @@ public class LotesService : ILotesService
                 : 0,
             CostoPorVara = lote.CostoPorVara,
             ValorRestante = (int)Math.Round(lote.CostoPorVara * lote.VarasDisponibles),
-            Ubicacion = lote.Ubicacion,
+            Ubicacion = lote.UbicacionFisica,
+            UbicacionInventario = lote.Ubicacion.ToString(),
             OrdenFifo = orden,
             Alerta = lote.Estado.ToString(),
             Estado = lote.Estado.ToString(),
@@ -241,8 +253,8 @@ public class LotesService : ILotesService
     ///
     /// Es una consulta informativa: sirve para avisar antes de perder el
     /// tiempo. La validación que manda ocurre al cobrar, dentro de
-    /// fn_consumir_lotes, que bloquea las filas —si entre escanear y cobrar
-    /// otra caja se llevó el stock, la venta falla ahí, que es donde debe.
+    /// fn_consumir, que bloquea las filas —si entre escanear y cobrar otra
+    /// caja se llevó el stock, la venta falla ahí, que es donde debe.
     /// </summary>
     public async Task<ValidacionDto> ValidarAsync(
         ValidarLoteRequest peticion, CancellationToken ct = default)
@@ -260,13 +272,37 @@ public class LotesService : ILotesService
 
         var producto = await _db.Productos.AsNoTracking()
             .Where(p => p.Id == fila.ProductoId)
-            .Select(p => new { p.Emoji, p.Precio })
+            .Select(p => new { p.Emoji })
+            .FirstAsync(ct);
+
+        // El precio sale de fn_precio_lote y no de la ficha: si el lote es de
+        // liquidación o trae precio propio, cobrarle el de lista sería vender
+        // algo que no existe.
+        var precio = await _db.Lotes.AsNoTracking()
+            .Where(l => l.Id == fila.LoteId)
+            .Select(l => l.PrecioUnitario)
+            .FirstOrDefaultAsync(ct)
+            ?? await PrecioDeLoteAsync(fila.LoteId, ct);
+
+        // De qué lado está. Un lote de bodega escaneado en el mesón es un
+        // aviso útil: hay que bajarlo antes de poder venderlo.
+        var ubicacion = await _db.Lotes.AsNoTracking()
+            .Where(l => l.Id == fila.LoteId)
+            .Select(l => l.Ubicacion)
             .FirstAsync(ct);
 
         // Que no alcance NO impide vender: el resto lo completa el siguiente
-        // lote por antigüedad. Lo que impide vender es que esté agotado o
-        // descartado, y eso llega en la advertencia.
-        var bloqueado = fila.VarasDisponibles == 0;
+        // lote por antigüedad. Lo que impide vender es que esté agotado,
+        // descartado, o que todavía esté en cámara.
+        var bloqueado = fila.VarasDisponibles == 0 || ubicacion != Ubicacion.venta;
+
+        var advertencia = fila.Advertencia;
+        if (ubicacion != Ubicacion.venta)
+        {
+            advertencia = $"Este lote está en bodega. Pídele a una administradora " +
+                          $"que lo pase al inventario de venta para poder venderlo." +
+                          (advertencia is null ? "" : " " + advertencia);
+        }
 
         return new ValidacionDto
         {
@@ -275,7 +311,7 @@ public class LotesService : ILotesService
             ProductoId = fila.ProductoId,
             Producto = fila.Producto,
             Emoji = producto.Emoji,
-            Precio = producto.Precio,
+            Precio = precio,
             VarasDisponibles = fila.VarasDisponibles,
             CantidadPedida = cantidad,
             FechaIngreso = fila.FechaIngreso,
@@ -284,10 +320,11 @@ public class LotesService : ILotesService
             Vencido = fila.Vencido,
             Alcanza = fila.Alcanza,
             SePuedeVender = !bloqueado,
+            EnMostrador = ubicacion == Ubicacion.venta,
             HayLoteAnterior = fila.HayLoteAnterior,
             LoteAnterior = fila.LoteAnterior,
             VarasAnteriores = fila.VarasAnteriores,
-            Advertencia = fila.Advertencia
+            Advertencia = advertencia
         };
     }
 
@@ -300,13 +337,19 @@ public class LotesService : ILotesService
     /// vender de uno nuevo. Son los candidatos a merma si no se liquidan.
     /// </summary>
     public async Task<IReadOnlyList<LoteDto>> RezagadosAsync(CancellationToken ct = default)
-        => await ProyectarActivos()
+        => await ProyectarActivos(Ubicacion.bodega)
             .Where(l => l.OrdenFifo == 1
                      && l.VarasDisponibles < l.VarasIniciales
-                     && _db.LotesActivos.Any(o => o.ProductoId == l.ProductoId && o.Id != l.Id))
+                     && _db.LotesActivos.Any(o => o.ProductoId == l.ProductoId
+                                               && o.UbicacionInventario == Ubicacion.bodega
+                                               && o.Id != l.Id))
             .OrderByDescending(l => l.DiasEnCamara)
             .ToListAsync(ct);
 
+    /// <summary>
+    /// Por vencer, de los dos lados. Acá SÍ interesa el mostrador: la flor
+    /// que se muere adelante es la que hay que rebajar hoy, no mañana.
+    /// </summary>
     public async Task<IReadOnlyList<LoteDto>> PorVencerAsync(
         int dias, CancellationToken ct = default)
         => await ProyectarActivos()
@@ -315,9 +358,9 @@ public class LotesService : ILotesService
             .ToListAsync(ct);
 
     /// <summary>
-    /// Costo promedio ponderado de lo que hay en cámara. Con lotes de $900 y
-    /// $800 mezclados no es el promedio simple: pesa cuántas varas quedan de
-    /// cada uno.
+    /// Costo promedio ponderado de todo el inventario, cámara y mesón. Con
+    /// lotes de $900 y $800 mezclados no es el promedio simple: pesa cuántas
+    /// varas quedan de cada uno.
     /// </summary>
     public async Task<IReadOnlyList<CostoPromedioDto>> CostoPromedioAsync(
         CancellationToken ct = default)
@@ -381,11 +424,12 @@ public class LotesService : ILotesService
        ================================================================== */
 
     /// <summary>
-    /// Registra dónde está el paquete. Es lo único editable de un lote: las
-    /// varas se mueven recibiendo, vendiendo o mermando, nunca escribiéndolas.
+    /// Registra dónde está guardado el paquete: 'Cámara 1, balde 3'. Es una
+    /// nota para encontrarlo y NO tiene relación con bodega/mostrador; eso se
+    /// cambia traspasando, no editando un texto.
     ///
-    /// Anotarla vale la pena para el caso incómodo: encontrar un balde sin
-    /// etiqueta y no saber qué lote es.
+    /// Es lo único editable de un lote: las varas se mueven recibiendo,
+    /// vendiendo o mermando, nunca escribiéndolas.
     /// </summary>
     public async Task<LoteDto> ActualizarUbicacionAsync(
         int id, ActualizarUbicacionRequest peticion, CancellationToken ct = default)
@@ -393,11 +437,11 @@ public class LotesService : ILotesService
         var lote = await _db.Lotes.FirstOrDefaultAsync(l => l.Id == id, ct)
             ?? throw new NoEncontradoException("El lote");
 
-        lote.Ubicacion = peticion.Ubicacion.Trim();
+        lote.UbicacionFisica = peticion.Ubicacion.Trim();
         await _db.SaveChangesAsync(ct);
 
-        _log.LogInformation("Lote {Codigo} movido a {Ubicacion} por {Autor}",
-            lote.Codigo, lote.Ubicacion, _usuarioActual.Email);
+        _log.LogInformation("Lote {Codigo} guardado en {Ubicacion} por {Autor}",
+            lote.Codigo, lote.UbicacionFisica, _usuarioActual.Email);
 
         return await ProyectarActivos().FirstOrDefaultAsync(l => l.Id == id, ct)
             ?? throw new NoEncontradoException("El lote");
@@ -459,6 +503,16 @@ public class LotesService : ILotesService
        INTERNO
        ================================================================== */
 
+    /// <summary>
+    /// El precio real de una vara de ese lote, resuelto por la base: precio
+    /// propio, si no la calidad, si no el de lista. Una sola fuente para que
+    /// el mesón, la vista de vendibles y el ticket no puedan discrepar.
+    /// </summary>
+    private async Task<int> PrecioDeLoteAsync(int loteId, CancellationToken ct)
+        => await _db.Database
+            .SqlQuery<int>($"SELECT fn_precio_lote({loteId})")
+            .FirstAsync(ct);
+
     private async Task<IReadOnlyList<EtiquetaDto>> ConstruirEtiquetasAsync(
         System.Linq.Expressions.Expression<Func<Domain.Entities.Lote, bool>> filtro,
         CancellationToken ct)
@@ -475,14 +529,20 @@ public class LotesService : ILotesService
                 FechaIngreso = l.FechaIngreso,
                 FechaVencimiento = l.FechaVencimiento,
                 Varas = l.VarasIniciales,
-                Ubicacion = l.Ubicacion,
+                Ubicacion = l.UbicacionFisica,
                 ContenidoQr = _opciones.UrlBase.TrimEnd('/') + "/" + l.Codigo,
                 UrlQr = "/api/lotes/" + l.Codigo + "/qr"
             })
             .ToListAsync(ct);
 
-    private IQueryable<LoteDto> ProyectarActivos()
+    /// <summary>
+    /// El filtro por lado va acá, sobre la entidad de la vista: en el DTO la
+    /// ubicación ya es texto para el front, y filtrar después obligaría a
+    /// comparar cadenas contra el enum.
+    /// </summary>
+    private IQueryable<LoteDto> ProyectarActivos(Ubicacion? ubicacion = null)
         => from l in _db.LotesActivos.AsNoTracking()
+           where ubicacion == null || l.UbicacionInventario == ubicacion
            select new LoteDto
            {
                Id = l.Id,
@@ -502,7 +562,8 @@ public class LotesService : ILotesService
                PorcentajeVendido = l.PorcentajeVendido,
                CostoPorVara = l.CostoPorVara,
                ValorRestante = l.ValorRestante,
-               Ubicacion = l.Ubicacion,
+               Ubicacion = l.Ubicacion,                              // el balde
+               UbicacionInventario = l.UbicacionInventario.ToString(), // el lado
                OrdenFifo = l.OrdenFifo,
                Calidad = l.Calidad != null ? l.Calidad.ToString() : null,
                OrigenLoteId = l.OrigenLoteId,

@@ -450,7 +450,7 @@ public class InventarioService : IInventarioService
                 // que está fuera del reparto automático porque usarla es una
                 // decisión y no algo que el sistema deba hacer solo.
                 var filas = await _consumidor.ConsumirAsync(
-                    linea.ComponenteId, necesita,
+                    linea.ComponenteId, necesita, peticion.Ubicacion,
                     $"Armado de {producto.Nombre}", _usuarioActual.Id,
                     "armado", id, TipoMovimiento.consumo,
                     lotePreferido: null,

@@ -78,19 +78,26 @@
              <summary>
              Descuenta varas de los lotes aplicando FIFO.
             
-             Vive acá y no dentro de un módulo porque lo usan tres flujos distintos
-             —armar, vender y desarmar— y la regla tiene que ser una sola. Duplicarla
-             haría que con el tiempo cada uno consumiera de forma ligeramente distinta.
+             Vive acá y no dentro de un módulo porque lo usan cuatro flujos distintos
+             —armar, vender, traspasar y desarmar— y la regla tiene que ser una sola.
+             Duplicarla haría que con el tiempo cada uno consumiera de forma
+             ligeramente distinta.
              </summary>
         </member>
-        <member name="M:Colibri.Api.Common.Inventario.IConsumidorLotes.ConsumirAsync(System.Int32,System.Int32,System.String,System.Nullable{System.Int32},System.String,System.Nullable{System.Int32},Colibri.Api.Domain.TipoMovimiento,System.Nullable{System.Int32},System.Collections.Generic.IEnumerable{System.Int32},System.Threading.CancellationToken)">
+        <member name="M:Colibri.Api.Common.Inventario.IConsumidorLotes.ConsumirAsync(System.Int32,System.Int32,Colibri.Api.Domain.Ubicacion,System.String,System.Nullable{System.Int32},System.String,System.Nullable{System.Int32},Colibri.Api.Domain.TipoMovimiento,System.Nullable{System.Int32},System.Collections.Generic.IEnumerable{System.Int32},System.Threading.CancellationToken)">
              <summary>
-             Consume <paramref name="cantidad"/> varas del producto.
+             Consume <paramref name="cantidad"/> varas del producto en la ubicación
+             indicada.
+            
+             <paramref name="ubicacion"/> va sin valor por defecto a propósito: un
+             descuento contra el lado equivocado no falla, descuadra el inventario
+             en silencio. Es preferible que el compilador obligue a decidirlo en
+             cada llamada.
             
              Los lotes de <paramref name="lotesAutorizados"/> se toman primero y de
              forma explícita: son los que quedaron fuera del reparto automático por
-             tener precio propio —flor recuperada— y alguien decidió usarlos. El
-             resto se completa por antigüedad.
+             tener precio propio —flor recuperada o de liquidación— y alguien
+             decidió usarlos. El resto se completa por antigüedad.
              </summary>
         </member>
         <member name="T:Colibri.Api.Common.ManejadorExcepciones">
@@ -225,6 +232,19 @@
         <member name="F:Colibri.Api.Common.Seguridad.Politicas.VerInventario">
             <summary>Consultar el inventario sin modificarlo.</summary>
         </member>
+        <member name="F:Colibri.Api.Common.Seguridad.Politicas.Mostrador">
+            <summary>
+            Bajar mercadería al mostrador y devolverla a bodega. Es exclusivo de
+            administración porque define cuánto puede vender el equipo en el día: si
+            el vendedor pudiera traspasar, el mostrador dejaría de ser un límite.
+            </summary>
+        </member>
+        <member name="F:Colibri.Api.Common.Seguridad.Politicas.Conteo">
+            <summary>
+            Conteo físico. La única operación que puede hacer aparecer existencias sin
+            causa física, así que la firma de quien la hace importa.
+            </summary>
+        </member>
         <member name="T:Colibri.Api.Common.Validacion.Rut">
              <summary>
              RUT chileno: normalización y dígito verificador.
@@ -266,6 +286,12 @@
              aplicarlo: intentará "corregir" la base hacia lo que cree que debería ser.
              </summary>
         </member>
+        <member name="P:Colibri.Api.Context.ColibriDbContext.Existencias">
+            <summary>Existencias separadas por lado: bodega y mostrador.</summary>
+        </member>
+        <member name="P:Colibri.Api.Context.ColibriDbContext.Vendibles">
+            <summary>Lo que el vendedor puede vender ahora mismo.</summary>
+        </member>
         <member name="M:Colibri.Api.Context.ColibriDbContext.AplicarNombresSnakeCase(Microsoft.EntityFrameworkCore.ModelBuilder)">
             <summary>
             Convierte PascalCase a snake_case para tablas, columnas e índices.
@@ -304,41 +330,53 @@
             </summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.Lote">
-            <summary>
-            El paquete físico que se recibe, se etiqueta con QR y se consume.
-            Codigo es lo que va dentro del QR y lo que permite reimprimir la etiqueta
-            si se pierde: en el papel no vive ningún dato, solo la identidad del lote.
-            </summary>
+             <summary>
+             El paquete físico que se recibe, se etiqueta con QR y se consume.
+            
+             Las varas nunca se escriben: entran recibiendo una compra, salen vendiendo,
+             armando o mermando, y se mueven entre bodega y mostrador traspasando. Cada
+             cambio deja un movimiento con su motivo y su responsable.
+             </summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Lote.Codigo">
-            <summary>Formato LOT-000123. Corto para poder tipearlo si el QR se borra.</summary>
+            <summary>Lo que va dentro del QR. Corto para poder tipearlo si la etiqueta se borra.</summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.Lote.Ubicacion">
+            <summary>
+            Bodega o mostrador. Un lote nace en bodega: al frente solo se llega
+            traspasando, y eso es lo que lo vuelve vendible. Un vendedor solo puede
+            vender lo que está en venta.
+            </summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.Lote.UbicacionFisica">
+             <summary>
+             Dónde está guardado el balde: 'Cámara 1, estante 3'. Es una nota para
+             encontrarlo, y NO tiene relación con bodega/mostrador.
+            
+             Antes esta propiedad se llamaba Ubicacion. Se renombró justamente
+             porque dos conceptos con el mismo nombre se confunden solos, y el día
+             que se confunden alguien vende flor que sigue en la cámara.
+             </summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Lote.OrigenLoteId">
             <summary>
-            De qué lote vienen estas varas. Null en una compra normal.
+            De qué lote salió este. Apunta al de origen en la flor recuperada, y al
+            lote de bodega del que bajó en una partida del mostrador. Es lo que
+            mantiene la trazabilidad: la vara del mesón sigue sabiendo de qué
+            compra vino.
             </summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Lote.Calidad">
-            <summary>
-            En qué estado volvió la flor. Null significa flor de primera,
-            recién comprada.
-            </summary>
+            <summary>Null significa flor de primera, recién comprada.</summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Lote.PrecioUnitario">
              <summary>
              Precio propio del lote. Null = se vende al precio del producto.
             
-             Ponerle precio tiene una consecuencia: el lote sale del FIFO
-             automático y solo se vende escaneándolo. Si entrara en el reparto
-             automático, una venta sin escaneo cobraría flor de segunda a precio
-             de primera —o al revés— sin que nadie lo note en el mesón.
+             Un lote con precio propio queda fuera del reparto automático: hay que
+             escanearlo. Si entrara en el FIFO, una venta cualquiera despacharía
+             flor rebajada al precio que le tocara sin que nadie lo decida.
              </summary>
-        </member>
-        <member name="P:Colibri.Api.Domain.Entities.Lote.Ubicacion">
-            <summary>Dónde está físicamente: 'Cámara 1, balde 3'.</summary>
-        </member>
-        <member name="P:Colibri.Api.Domain.Entities.Lote.OrigenLote">
-            <summary>Lote del que provienen estas varas, si es recuperación.</summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Configuracion.Clave">
             <summary>Sección: local, ticket, venta o club.</summary>
@@ -356,11 +394,21 @@
         <member name="P:Colibri.Api.Domain.Entities.Producto.Precio">
             <summary>Precio de venta con IVA incluido, en pesos enteros.</summary>
         </member>
+        <member name="P:Colibri.Api.Domain.Entities.Producto.Stock">
+             <summary>
+             Suma de los lotes activos, mantenida por un trigger. Escribirlo a mano
+             lo rechaza la base.
+            
+             Desde que existe el mostrador es el TOTAL: cámara más frente. La flor
+             del mesón no dejó de ser tuya, pero tampoco está toda vendible. Para el
+             desglose por lado está vw_existencias.
+             </summary>
+        </member>
         <member name="P:Colibri.Api.Domain.Entities.Producto.ControlaLotes">
             <summary>
-            Las flores se controlan por lote: su Stock es la suma de los lotes
-            activos, mantenida por un trigger. Escribirlo a mano lo rechaza la base.
-            Un jarrón de vidrio no se muere y no necesita el seguimiento.
+            Las flores se controlan por lote. Un jarrón de vidrio no se muere y no
+            necesita el seguimiento: se vende directo del estante, sin pasar por el
+            mostrador.
             </summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Producto.DiasVida">
@@ -387,6 +435,16 @@
         </member>
         <member name="P:Colibri.Api.Domain.Entities.MovimientoInventario.LoteId">
             <summary>De qué lote salió o entró. Nulo en productos sin control por lote.</summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.MovimientoInventario.Ubicacion">
+             <summary>
+             De qué lado ocurrió: bodega o mostrador.
+            
+             Sin esto un traspaso se ve igual que una salida, y la suma de
+             movimientos por ubicación deja de cuadrar con las existencias de esa
+             ubicación —que es justamente la consulta con la que se audita cuando
+             algo no calza.
+             </summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.MovimientoInventario.Cantidad">
             <summary>Con signo: negativo cuando el producto sale.</summary>
@@ -461,6 +519,25 @@
         </member>
         <member name="P:Colibri.Api.Domain.Entities.Promocion.Dias">
             <summary>Días en que corre. 0 = domingo. Vacío significa todos los días.</summary>
+        </member>
+        <member name="T:Colibri.Api.Domain.Entities.Vendible">
+            <summary>Una partida en el mostrador. Mapea la vista vw_vendibles.</summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.Vendible.Calidad">
+            <summary>optima · buena · limitada. Null en flor de primera.</summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.Vendible.Precio">
+            <summary>
+            Ya resuelto por fn_precio_lote: precio propio del lote, si no la
+            calidad, si no el precio de lista. Viene calculado de la base para que
+            el mesón, esta vista y el ticket no puedan responder distinto.
+            </summary>
+        </member>
+        <member name="T:Colibri.Api.Domain.Entities.ResultadoTraspaso">
+            <summary>Lo que devuelve fn_traspasar: una fila por lote tocado.</summary>
+        </member>
+        <member name="T:Colibri.Api.Domain.Entities.ResultadoConteo">
+            <summary>Lo que devuelve fn_conteo.</summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.Caja">
             <summary>
@@ -584,16 +661,35 @@
             <summary>Texto listo para mostrar. Null si no hay nada que advertir.</summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.ProductoDisponible">
-            <summary>
-            Disponibilidad real de un producto. Para un armado: las unidades ya hechas
-            más las que alcanzan a armarse con el stock de tallos, que es el mínimo
-            entre todos sus ingredientes.
-            </summary>
+             <summary>
+             Disponibilidad real de un producto. Para un armado: las unidades ya hechas
+             más las que alcanzan a armarse con el stock de tallos, que es el mínimo
+             entre todos sus ingredientes.
+            
+             OJO con Disponible: desde que existe el mostrador es el TOTAL, cámara más
+             frente. La flor del mesón no dejó de ser tuya, pero tampoco está toda
+             vendible. Para el desglose por lado está vw_existencias.
+             </summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.ProductoCosto">
             <summary>Costo unitario real: para un armado, su receta más la mano de obra.</summary>
         </member>
+        <member name="T:Colibri.Api.Domain.Entities.Existencia">
+             <summary>
+             Existencias de un producto en un lado. Mapea vw_existencias.
+            
+             Es la vista que permite mostrar el inventario partido en cámara y frente,
+             que es la información con la que se decide qué bajar al mostrador.
+             </summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.Existencia.Ubicacion">
+            <summary>bodega o venta.</summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.Existencia.VenceAntes">
+            <summary>El vencimiento más cercano de ese lado. Null si nada vence.</summary>
+        </member>
         <member name="T:Colibri.Api.Domain.Entities.ResultadoDiario">
+            <summary>Lo que devuelve fn_traspasar: una fila por lote tocado.</summary>
             <summary>De los ingresos a la utilidad, día por día.</summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.CompromisoEvento">
@@ -603,12 +699,16 @@
             <summary>
             Lotes con existencias, su antigüedad y su alerta.
             OrdenFifo dice en qué posición está el lote en la fila de consumo:
-            el 1 es el que debería venderse ahora.
+            el 1 es el que debería venderse ahora, y se numera DENTRO DE CADA LADO.
             </summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.LoteActivo.Ubicacion">
+            <summary>Dónde está guardado: 'Cámara 1, balde 3'. Es una nota.</summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.LoteActivo.UbicacionInventario">
             <summary>
-            Lotes con existencias, su antigüedad y su alerta.
-            OrdenFifo dice en qué posición está el lote en la fila de consumo:
-            el 1 es el que debería venderse ahora.
+            De qué lado está: bodega o venta. Distinto de Ubicacion, que es el
+            balde. Solo se puede vender lo que está en venta.
             </summary>
         </member>
         <member name="P:Colibri.Api.Domain.Entities.LoteActivo.Calidad">
@@ -636,7 +736,6 @@
             <summary>normal · por vencer · vencido · resto por liquidar</summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.LoteRecuperado">
-             <summary>Flor recuperada disponible para vender, con su rebaja.</summary>
              <summary>
              Flor recuperada disponible para vender, con su rebaja.
             
@@ -655,16 +754,22 @@
             </summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.CostoPromedio">
-            <summary>Costo promedio ponderado de lo que hay en cámara, por producto.</summary>
+            <summary>Costo promedio ponderado del inventario, por producto.</summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.EvolucionCosto">
             <summary>Cómo se movió el costo por vara entre una compra y la siguiente.</summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.ConsumoLote">
             <summary>
-            Fila que devuelve fn_consumir_lotes: de qué lote salió cada porción y a
-            qué costo. No es una tabla ni una vista; se mapea sin clave para poder
-            leer el resultado de la función.
+            Fila que devuelve fn_consumir: de qué lote salió cada porción, a qué costo
+            y a qué precio. No es una tabla ni una vista; se mapea sin clave para
+            poder leer el resultado de la función.
+            </summary>
+        </member>
+        <member name="P:Colibri.Api.Domain.Entities.ConsumoLote.PrecioVenta">
+            <summary>
+            A qué precio se vende esa vara, resuelto en la base según precio
+            propio del lote, calidad y precio de lista.
             </summary>
         </member>
         <member name="T:Colibri.Api.Domain.Entities.CotizacionSaldo">
@@ -732,6 +837,15 @@
         </member>
         <member name="F:Colibri.Api.Domain.CalidadReingreso.limitada">
             <summary>Solo para relleno de arreglos, no para vender suelta.</summary>
+        </member>
+        <member name="T:Colibri.Api.Domain.Ubicacion">
+             <summary>
+             Dónde está la mercadería. Bodega es la cámara; venta es el mostrador, y es
+             lo único que un vendedor puede vender.
+            
+             Los nombres calzan exactamente con el enum ubicacion_inventario de
+             PostgreSQL: se pasan como texto y la base los convierte.
+             </summary>
         </member>
         <member name="M:Colibri.Api.Features.Auth.AuthController.Login(Colibri.Api.Features.Auth.Dtos.LoginRequest,System.Threading.CancellationToken)">
              <summary>
@@ -1671,6 +1785,12 @@
         <member name="P:Colibri.Api.Features.Inventario.Dtos.AjustarStockRequest.Cantidad">
             <summary>Con signo: positivo entra, negativo sale.</summary>
         </member>
+        <member name="P:Colibri.Api.Features.Inventario.Dtos.ArmarRequest.Ubicacion">
+            <summary>
+            Dónde se arma. Bodega es producción para stock; venta es la vendedora
+            armando en el mesón con lo que tiene adelante.
+            </summary>
+        </member>
         <member name="P:Colibri.Api.Features.Inventario.Dtos.ArmarRequest.LotesAutorizados">
              <summary>
              Lotes de flor recuperada que se autorizan para este armado.
@@ -1921,17 +2041,109 @@
              y el costo real de la producción.
              </remarks>
         </member>
+        <member name="T:Colibri.Api.Features.InventarioVenta.VendibleDto">
+            <summary>Una partida que está en el mostrador, lista para vender.</summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.VendibleDto.Calidad">
+            <summary>optima · buena · limitada. Null en flor de primera recién comprada.</summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.VendibleDto.Precio">
+            <summary>Lo que se cobra por vara. Ya resuelto según calidad y precio propio.</summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.VendibleDto.RequiereEscaneo">
+            <summary>
+            Queda fuera del reparto automático: hay que elegirlo a propósito. Si
+            entrara en la fila normal, una venta cualquiera despacharía flor de
+            liquidación al precio que le tocara sin que nadie lo decida.
+            </summary>
+        </member>
+        <member name="T:Colibri.Api.Features.InventarioVenta.LineaMostradorDto">
+            <summary>Resumen del mostrador, agrupado por producto.</summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.LineaMostradorDto.HayQueReponer">
+            <summary>
+            El mínimo comparado contra el MOSTRADOR, no contra la bodega. Es el
+            aviso de qué hay que bajar al frente, que es la decisión que este
+            panel tiene que apoyar.
+            </summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.EstadoMostradorDto.MargenPotencial">
+            <summary>Lo que se ganaría si se vendiera todo lo que está adelante.</summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.TraspasarRequest.LoteId">
+            <summary>
+            Lote concreto a bajar. Sin esto se toma por FIFO, que es lo correcto
+            casi siempre; se indica cuando hay que sacar uno rezagado.
+            </summary>
+        </member>
+        <member name="P:Colibri.Api.Features.InventarioVenta.ConteoRequest.Contado">
+            <summary>Lo que hay en el balde, no la diferencia.</summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaService.TraspasarAsync(Colibri.Api.Features.InventarioVenta.TraspasarRequest,System.Threading.CancellationToken)">
+            <summary>
+            Baja mercadería de la cámara al mostrador. Es el único camino por el
+            que algo se vuelve vendible, y por eso es exclusivo de administración:
+            define cuánto puede vender el equipo en el día.
+            </summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaService.RetornarAsync(Colibri.Api.Features.InventarioVenta.RetornarRequest,System.Threading.CancellationToken)">
+            <summary>
+            Devuelve al fondo lo que se bajó de más. Las varas vuelven a su lote de
+            origen: conservan costo, procedencia y vencimiento, porque el lote
+            nunca cambió de fecha.
+            </summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaService.ContarAsync(Colibri.Api.Features.InventarioVenta.ConteoRequest,System.Threading.CancellationToken)">
+             <summary>
+             Conteo físico. Reemplaza al ajuste manual.
+            
+             No dice «suma 7»: dice «conté 113». El sistema calcula la diferencia y
+             deja registrado lo que él creía. Es una auditoría, no una corrección
+             anónima, y es la única operación que puede hacer aparecer existencias
+             sin causa física: por eso queda reservada a administración.
+             </summary>
+        </member>
+        <member name="T:Colibri.Api.Features.InventarioVenta.InventarioVentaController">
+            <summary>El mostrador: lo que está adelante y se puede vender.</summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaController.Estado(System.Threading.CancellationToken)">
+            <summary>Resumen del mostrador con valores y avisos de reposición.</summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaController.Vendibles(System.Threading.CancellationToken)">
+            <summary>El catálogo del vendedor: solo lo que hay adelante.</summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaController.Traspasar(Colibri.Api.Features.InventarioVenta.TraspasarRequest,System.Threading.CancellationToken)">
+            <summary>Baja mercadería de la cámara al mostrador.</summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaController.Retornar(Colibri.Api.Features.InventarioVenta.RetornarRequest,System.Threading.CancellationToken)">
+            <summary>Devuelve a la cámara lo que se bajó de más.</summary>
+        </member>
+        <member name="M:Colibri.Api.Features.InventarioVenta.InventarioVentaController.Conteo(Colibri.Api.Features.InventarioVenta.ConteoRequest,System.Threading.CancellationToken)">
+            <summary>Conteo físico de un lote. Reemplaza al ajuste manual.</summary>
+        </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteDto.Codigo">
             <summary>Lo que va dentro del QR. Corto para poder tipearlo si la etiqueta se borra.</summary>
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteDto.ValorRestante">
             <summary>Cuánto dinero queda parado en este lote.</summary>
         </member>
+        <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteDto.Ubicacion">
+            <summary>
+            Dónde está guardado: 'Cámara 1, balde 3'. Es una nota para encontrarlo
+            físicamente. NO confundir con UbicacionInventario.
+            </summary>
+        </member>
+        <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteDto.UbicacionInventario">
+            <summary>
+            De qué lado está: bodega o venta. Solo se puede vender lo que está en
+            venta; lo demás hay que bajarlo al mostrador primero.
+            </summary>
+        </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteDto.OrdenFifo">
             <summary>
             Posición en la fila de consumo: el 1 es el que debería venderse ahora.
-            Null en los lotes que requieren escaneo, que no participan del
-            reparto automático.
+            Se numera dentro de cada lado, no sobre el total. Null en los lotes que
+            requieren escaneo, que no participan del reparto automático.
             </summary>
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteDto.Calidad">
@@ -1967,9 +2179,16 @@
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.ValidacionDto.SePuedeVender">
             <summary>
-            Si se puede vender. Falso solo cuando el lote está agotado o descartado:
-            que no alcance no impide vender, porque el resto lo completa el
-            siguiente lote por antigüedad.
+            Si se puede vender. Falso cuando el lote está agotado, descartado, o
+            todavía en cámara: que no alcance no impide vender, porque el resto lo
+            completa el siguiente lote por antigüedad.
+            </summary>
+        </member>
+        <member name="P:Colibri.Api.Features.Lotes.Dtos.ValidacionDto.EnMostrador">
+            <summary>
+            Si está en el mostrador. Un lote de bodega escaneado en el mesón no se
+            puede vender todavía: hay que bajarlo. Decirlo acá evita que la venta
+            falle después con un mensaje mucho menos claro.
             </summary>
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.ValidacionDto.HayLoteAnterior">
@@ -1979,7 +2198,7 @@
             <summary>Texto listo para mostrar. Null si no hay nada que advertir.</summary>
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.CostoPromedioDto.Varas">
-            <summary>Varas en cámara, sumando todos los lotes activos.</summary>
+            <summary>Varas en inventario, sumando cámara y mostrador.</summary>
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.CostoPromedioDto.ValorTotal">
             <summary>Dinero inmovilizado en ese producto.</summary>
@@ -1996,6 +2215,9 @@
         <member name="T:Colibri.Api.Features.Lotes.Dtos.EtiquetaDto">
             <summary>Datos para imprimir una etiqueta adhesiva.</summary>
         </member>
+        <member name="P:Colibri.Api.Features.Lotes.Dtos.EtiquetaDto.Ubicacion">
+            <summary>Dónde está guardado. Va impreso para encontrarlo en cámara.</summary>
+        </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.EtiquetaDto.ContenidoQr">
             <summary>Lo que se codifica en el QR.</summary>
         </member>
@@ -2004,6 +2226,12 @@
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.ActualizarUbicacionRequest.Ubicacion">
             <summary>Dónde está físicamente: 'Cámara 1, balde 3'.</summary>
+        </member>
+        <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteFiltro.Ubicacion">
+            <summary>
+            Qué lado mirar. Null trae bodega, que es de lo que trata esta pantalla:
+            lo que está adelante tiene su propia vista.
+            </summary>
         </member>
         <member name="P:Colibri.Api.Features.Lotes.Dtos.LoteFiltro.Alerta">
             <summary>normal, por vencer, vencido o resto por liquidar.</summary>
@@ -2143,12 +2371,16 @@
             </summary>
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.ListarActivosAsync(Colibri.Api.Features.Lotes.Dtos.LoteFiltro,System.Threading.CancellationToken)">
-            <summary>
-            Lotes con existencias. Sale de vw_lotes_activos porque la vista ya
-            calcula el orden FIFO con una función de ventana y la alerta: hacerlo
-            en C# obligaría a traerse todos los lotes de cada producto para
-            numerarlos.
-            </summary>
+             <summary>
+             Lotes con existencias. Sale de vw_lotes_activos porque la vista ya
+             calcula el orden FIFO con una función de ventana y la alerta: hacerlo
+             en C# obligaría a traerse todos los lotes de cada producto para
+             numerarlos.
+            
+             Por defecto muestra BODEGA. Esta pantalla es la cámara; lo que está
+             adelante tiene su propia vista, y mezclarlos haría que un mismo lote
+             apareciera dos veces —el padre y su partida— sin que se entienda por qué.
+             </summary>
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.ListarHistorialAsync(Colibri.Api.Features.Lotes.Dtos.HistorialLoteFiltro,System.Threading.CancellationToken)">
             <summary>
@@ -2162,8 +2394,8 @@
             
              Es una consulta informativa: sirve para avisar antes de perder el
              tiempo. La validación que manda ocurre al cobrar, dentro de
-             fn_consumir_lotes, que bloquea las filas —si entre escanear y cobrar
-             otra caja se llevó el stock, la venta falla ahí, que es donde debe.
+             fn_consumir, que bloquea las filas —si entre escanear y cobrar otra
+             caja se llevó el stock, la venta falla ahí, que es donde debe.
              </summary>
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.RezagadosAsync(System.Threading.CancellationToken)">
@@ -2172,11 +2404,17 @@
             vender de uno nuevo. Son los candidatos a merma si no se liquidan.
             </summary>
         </member>
+        <member name="M:Colibri.Api.Features.Lotes.LotesService.PorVencerAsync(System.Int32,System.Threading.CancellationToken)">
+            <summary>
+            Por vencer, de los dos lados. Acá SÍ interesa el mostrador: la flor
+            que se muere adelante es la que hay que rebajar hoy, no mañana.
+            </summary>
+        </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.CostoPromedioAsync(System.Threading.CancellationToken)">
             <summary>
-            Costo promedio ponderado de lo que hay en cámara. Con lotes de $900 y
-            $800 mezclados no es el promedio simple: pesa cuántas varas quedan de
-            cada uno.
+            Costo promedio ponderado de todo el inventario, cámara y mesón. Con
+            lotes de $900 y $800 mezclados no es el promedio simple: pesa cuántas
+            varas quedan de cada uno.
             </summary>
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.RecuperadosAsync(System.Threading.CancellationToken)">
@@ -2187,11 +2425,12 @@
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.ActualizarUbicacionAsync(System.Int32,Colibri.Api.Features.Lotes.Dtos.ActualizarUbicacionRequest,System.Threading.CancellationToken)">
              <summary>
-             Registra dónde está el paquete. Es lo único editable de un lote: las
-             varas se mueven recibiendo, vendiendo o mermando, nunca escribiéndolas.
+             Registra dónde está guardado el paquete: 'Cámara 1, balde 3'. Es una
+             nota para encontrarlo y NO tiene relación con bodega/mostrador; eso se
+             cambia traspasando, no editando un texto.
             
-             Anotarla vale la pena para el caso incómodo: encontrar un balde sin
-             etiqueta y no saber qué lote es.
+             Es lo único editable de un lote: las varas se mueven recibiendo,
+             vendiendo o mermando, nunca escribiéndolas.
              </summary>
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.EtiquetasDeCompraAsync(System.Int32,System.Threading.CancellationToken)">
@@ -2205,6 +2444,20 @@
             Imagen PNG del QR. Contiene la URL que abre la ficha del lote; ningún
             dato del lote viaja en el papel, así que una etiqueta perdida se
             reimprime sin consecuencias.
+            </summary>
+        </member>
+        <member name="M:Colibri.Api.Features.Lotes.LotesService.PrecioDeLoteAsync(System.Int32,System.Threading.CancellationToken)">
+            <summary>
+            El precio real de una vara de ese lote, resuelto por la base: precio
+            propio, si no la calidad, si no el de lista. Una sola fuente para que
+            el mesón, la vista de vendibles y el ticket no puedan discrepar.
+            </summary>
+        </member>
+        <member name="M:Colibri.Api.Features.Lotes.LotesService.ProyectarActivos(System.Nullable{Colibri.Api.Domain.Ubicacion})">
+            <summary>
+            El filtro por lado va acá, sobre la entidad de la vista: en el DTO la
+            ubicación ya es texto para el front, y filtrar después obligaría a
+            comparar cadenas contra el enum.
             </summary>
         </member>
         <member name="M:Colibri.Api.Features.Lotes.LotesService.Normalizar(System.String)">

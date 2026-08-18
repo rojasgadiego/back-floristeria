@@ -52,12 +52,19 @@ public class ColibriDbContext : DbContext
     public DbSet<EvolucionCosto> EvolucionCostos => Set<EvolucionCosto>();
     public DbSet<CotizacionSaldo> CotizacionesSaldo => Set<CotizacionSaldo>();
 
+    /// <summary>Existencias separadas por lado: bodega y mostrador.</summary>
+    public DbSet<Existencia> Existencias => Set<Existencia>();
+
+    /// <summary>Lo que el vendedor puede vender ahora mismo.</summary>
+    public DbSet<Vendible> Vendibles => Set<Vendible>();
+
     // --- Resultados de funciones. Solo lectura, vía FromSql ---
     public DbSet<ConsumoLote> ConsumosLote => Set<ConsumoLote>();
     public DbSet<RecepcionLote> RecepcionesLote => Set<RecepcionLote>();
     public DbSet<ValidacionLote> ValidacionesLote => Set<ValidacionLote>();
     public DbSet<ReingresoLote> ReingresosLote => Set<ReingresoLote>();
-
+    public DbSet<ResultadoTraspaso> ResultadosTraspaso => Set<ResultadoTraspaso>();
+    public DbSet<ResultadoConteo> ResultadosConteo => Set<ResultadoConteo>();
 
 
     protected override void OnModelCreating(ModelBuilder mb)
@@ -81,6 +88,11 @@ public class ColibriDbContext : DbContext
         mb.HasPostgresEnum<EstadoCompra>("estado_compra");
         mb.HasPostgresEnum<DestinoMerma>("destino_merma");
         mb.HasPostgresEnum<CalidadReingreso>("calidad_reingreso");
+
+        // Bodega o mostrador. Sin esta línea, cualquier consulta que toque
+        // lotes.ubicacion falla en tiempo de ejecución con un error de
+        // Npgsql que no menciona la causa.
+        mb.HasPostgresEnum<Ubicacion>("ubicacion_inventario");
 
         ConfigurarAcceso(mb);
         ConfigurarCatalogo(mb);
@@ -163,6 +175,10 @@ public class ColibriDbContext : DbContext
             e.ToTable("movimientos_inventario");
             e.HasKey(x => x.Id);
             e.Property(x => x.CreadoEn).HasDefaultValueSql("now()");
+
+            // De qué lado ocurrió. Sin esto un traspaso se ve igual que una
+            // salida y el libro deja de cuadrar por ubicación.
+            e.Property(x => x.Ubicacion).HasDefaultValue(Ubicacion.bodega);
 
             e.HasOne(x => x.Producto)
              .WithMany(p => p.Movimientos)
@@ -285,6 +301,16 @@ public class ColibriDbContext : DbContext
             e.Property(x => x.CreadoEn).HasDefaultValueSql("now()");
             e.Property(x => x.ActualizadoEn).HasDefaultValueSql("now()");
 
+            // Bodega o mostrador. Un lote nace en bodega: al frente solo se
+            // llega traspasando, que es lo que lo vuelve vendible.
+            e.Property(x => x.Ubicacion).HasDefaultValue(Ubicacion.bodega);
+
+            // Dónde está guardado el balde: 'Cámara 1, estante 3'. Es una nota
+            // para encontrarlo, NO tiene que ver con bodega/mostrador. Se
+            // llamaba Ubicacion, y por eso se renombró: dos conceptos con el
+            // mismo nombre se confunden solos.
+            e.Property(x => x.UbicacionFisica).HasColumnName("ubicacion_fisica");
+
             e.HasOne(x => x.Producto).WithMany(p => p.Lotes)
              .HasForeignKey(x => x.ProductoId).OnDelete(DeleteBehavior.Restrict);
 
@@ -298,12 +324,14 @@ public class ColibriDbContext : DbContext
              .HasForeignKey(x => x.PresentacionId).OnDelete(DeleteBehavior.SetNull);
 
             // Autorreferencia: un lote de recuperación apunta al que le dio
-            // origen, y de ahí hereda la fecha de ingreso y el vencimiento.
+            // origen, y una partida del mostrador al lote de bodega del que
+            // bajó. De ahí hereda fecha de ingreso, vencimiento y costo.
             e.HasOne(x => x.OrigenLote).WithMany()
              .HasForeignKey(x => x.OrigenLoteId).OnDelete(DeleteBehavior.SetNull);
 
-            // El índice que hace barato el FIFO
-            e.HasIndex(x => new { x.ProductoId, x.FechaIngreso, x.Id })
+            // El índice que hace barato el FIFO. Lleva la ubicación porque la
+            // fila de consumo es propia de cada lado.
+            e.HasIndex(x => new { x.ProductoId, x.Ubicacion, x.FechaIngreso, x.Id })
              .HasDatabaseName("lotes_fifo_idx");
         });
     }
@@ -443,6 +471,19 @@ public class ColibriDbContext : DbContext
              .HasForeignKey(x => x.VentaId).OnDelete(DeleteBehavior.SetNull);
         });
 
+        mb.Entity<CotizacionItem>(e =>
+        {
+            e.ToTable("cotizacion_items");
+            e.HasKey(x => x.Id);
+
+            e.HasOne(x => x.Cotizacion).WithMany(c => c.Items)
+            .HasForeignKey(x => x.CotizacionId).OnDelete(DeleteBehavior.Cascade);
+
+            e.HasOne(x => x.Producto).WithMany()
+            .HasForeignKey(x => x.ProductoId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+
         // ventas.cotizacion_id se declara desde este lado para evitar el ciclo
         mb.Entity<Venta>()
           .HasOne(v => v.Cotizacion).WithMany()
@@ -489,12 +530,19 @@ public class ColibriDbContext : DbContext
         mb.Entity<EvolucionCosto>().HasNoKey().ToView("vw_evolucion_costo");
         mb.Entity<CotizacionSaldo>().HasNoKey().ToView("vw_cotizaciones_saldo");
 
+        // El desglose por lado. productos.stock sigue siendo el total —la flor
+        // del mesón no dejó de ser tuya—; acá está partido en bodega y venta.
+        mb.Entity<Existencia>().HasNoKey().ToView("vw_existencias");
+        mb.Entity<Vendible>().HasNoKey().ToView("vw_vendibles");
+
         // ToView(null): no hay tabla ni vista detrás. Solo se consultan con
         // FromSql sobre las funciones de negocio.
         mb.Entity<ConsumoLote>().HasNoKey().ToView((string?)null);
         mb.Entity<RecepcionLote>().HasNoKey().ToView((string?)null);
         mb.Entity<ValidacionLote>().HasNoKey().ToView((string?)null);
         mb.Entity<ReingresoLote>().HasNoKey().ToView((string?)null);
+        mb.Entity<ResultadoTraspaso>().HasNoKey().ToView((string?)null);
+        mb.Entity<ResultadoConteo>().HasNoKey().ToView((string?)null);
     }
 
     /// <summary>

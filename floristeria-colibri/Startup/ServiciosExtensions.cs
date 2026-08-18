@@ -1,6 +1,5 @@
 using Colibri.Api.Common;
 using Colibri.Api.Common.Seguridad;
-using Colibri.Api.Common.Seguridad;
 using Colibri.Api.Context;
 using Colibri.Api.Domain;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -46,6 +45,7 @@ public static class ServiciosExtensions
         constructor.MapEnum<TipoPresentacion>("tipo_presentacion");
         constructor.MapEnum<EstadoLote>("estado_lote");
         constructor.MapEnum<EstadoCompra>("estado_compra");
+        constructor.MapEnum<Ubicacion>("ubicacion_inventario");
 
         var fuente = constructor.Build();
         servicios.AddSingleton(fuente);
@@ -105,6 +105,8 @@ public static class ServiciosExtensions
                 p => p.RequireRole(Roles.Admin, Roles.Bodega));
             o.AddPolicy(Politicas.VerInventario,
                 p => p.RequireRole(Roles.Admin, Roles.Vendedor, Roles.Bodega));
+            o.AddPolicy(Politicas.Mostrador, p => p.RequireRole(nameof(RolUsuario.admin)));
+            o.AddPolicy(Politicas.Conteo,    p => p.RequireRole(nameof(RolUsuario.admin)));
         });
 
         servicios.AddHttpContextAccessor();

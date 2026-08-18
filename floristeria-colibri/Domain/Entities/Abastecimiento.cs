@@ -99,65 +99,82 @@ public class CompraItem
 
 /// <summary>
 /// El paquete físico que se recibe, se etiqueta con QR y se consume.
-/// Codigo es lo que va dentro del QR y lo que permite reimprimir la etiqueta
-/// si se pierde: en el papel no vive ningún dato, solo la identidad del lote.
+///
+/// Las varas nunca se escriben: entran recibiendo una compra, salen vendiendo,
+/// armando o mermando, y se mueven entre bodega y mostrador traspasando. Cada
+/// cambio deja un movimiento con su motivo y su responsable.
 /// </summary>
 public class Lote
 {
     public int Id { get; set; }
-
-    /// <summary>Formato LOT-000123. Corto para poder tipearlo si el QR se borra.</summary>
+ 
+    /// <summary>Lo que va dentro del QR. Corto para poder tipearlo si la etiqueta se borra.</summary>
     public string Codigo { get; set; } = null!;
-
+ 
     public int ProductoId { get; set; }
     public int? CompraId { get; set; }
     public int? CompraItemId { get; set; }
     public int? ProveedorId { get; set; }
     public int? PresentacionId { get; set; }
-
+ 
     public DateOnly FechaIngreso { get; set; }
     public DateOnly? FechaVencimiento { get; set; }
-
+ 
     public int VarasIniciales { get; set; }
     public int VarasDisponibles { get; set; }
+ 
     public decimal CostoPorVara { get; set; }
-
+ 
     public EstadoLote Estado { get; set; } = EstadoLote.activo;
-
-
+ 
     /// <summary>
-    /// De qué lote vienen estas varas. Null en una compra normal.
+    /// Bodega o mostrador. Un lote nace en bodega: al frente solo se llega
+    /// traspasando, y eso es lo que lo vuelve vendible. Un vendedor solo puede
+    /// vender lo que está en venta.
+    /// </summary>
+    public Ubicacion Ubicacion { get; set; } = Ubicacion.bodega;
+ 
+    /// <summary>
+    /// Dónde está guardado el balde: 'Cámara 1, estante 3'. Es una nota para
+    /// encontrarlo, y NO tiene relación con bodega/mostrador.
+    ///
+    /// Antes esta propiedad se llamaba Ubicacion. Se renombró justamente
+    /// porque dos conceptos con el mismo nombre se confunden solos, y el día
+    /// que se confunden alguien vende flor que sigue en la cámara.
+    /// </summary>
+    public string? UbicacionFisica { get; set; }
+ 
+    public string? Notas { get; set; }
+ 
+    // --- Recuperación y liquidación ---
+ 
+    /// <summary>
+    /// De qué lote salió este. Apunta al de origen en la flor recuperada, y al
+    /// lote de bodega del que bajó en una partida del mostrador. Es lo que
+    /// mantiene la trazabilidad: la vara del mesón sigue sabiendo de qué
+    /// compra vino.
     /// </summary>
     public int? OrigenLoteId { get; set; }
-
-    /// <summary>
-    /// En qué estado volvió la flor. Null significa flor de primera,
-    /// recién comprada.
-    /// </summary>
+ 
+    /// <summary>Null significa flor de primera, recién comprada.</summary>
     public CalidadReingreso? Calidad { get; set; }
-
+ 
     /// <summary>
     /// Precio propio del lote. Null = se vende al precio del producto.
     ///
-    /// Ponerle precio tiene una consecuencia: el lote sale del FIFO
-    /// automático y solo se vende escaneándolo. Si entrara en el reparto
-    /// automático, una venta sin escaneo cobraría flor de segunda a precio
-    /// de primera —o al revés— sin que nadie lo note en el mesón.
+    /// Un lote con precio propio queda fuera del reparto automático: hay que
+    /// escanearlo. Si entrara en el FIFO, una venta cualquiera despacharía
+    /// flor rebajada al precio que le tocara sin que nadie lo decida.
     /// </summary>
     public int? PrecioUnitario { get; set; }
-
-    /// <summary>Dónde está físicamente: 'Cámara 1, balde 3'.</summary>
-    public string? Ubicacion { get; set; }
-
-    public string? Notas { get; set; }
+ 
     public DateTimeOffset CreadoEn { get; set; }
     public DateTimeOffset ActualizadoEn { get; set; }
-
+ 
+    // --- Navegación ---
     public Producto Producto { get; set; } = null!;
     public Compra? Compra { get; set; }
     public Proveedor? Proveedor { get; set; }
     public Presentacion? Presentacion { get; set; }
-
-    /// <summary>Lote del que provienen estas varas, si es recuperación.</summary>
     public Lote? OrigenLote { get; set; }
 }

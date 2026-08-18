@@ -11,11 +11,12 @@ using Colibri.Api.Features.Configuracion;
 using Colibri.Api.Features.Promociones;
 using Colibri.Api.Features.Cotizaciones;
 using Colibri.Api.Features.Reportes;
+using Colibri.Api.Features.InventarioVenta;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// No anunciar el servidor ni su versión: no ayuda a nadie salvo a quien
-// busca vulnerabilidades conocidas de una versión concreta.
+// No anunciar el servidor ni su versiï¿½n: no ayuda a nadie salvo a quien
+// busca vulnerabilidades conocidas de una versiï¿½n concreta.
 builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);
 
 // Infraestructura
@@ -29,11 +30,12 @@ builder.Services
     .AgregarCors(builder.Configuration)
     .AgregarLimitesDePeticiones();
 
-// Módulos de negocio
+// Mï¿½dulos de negocio
 builder.Services
     .AgregarAuth(builder.Configuration)
     .AgregarUsuarios()
     .AgregarInventario()
+    .AgregarInventarioVenta() 
     .AgregarCompras()
     .AgregarLotes(builder.Configuration)
     .AgregarVentas()

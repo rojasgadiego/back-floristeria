@@ -1,4 +1,9 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿// Common/Inventario/ConsumidorLotes.cs
+// Reemplaza el contenido COMPLETO del archivo que ya tienes.
+// Acá va SOLO la clase: la interfaz vive en IConsumidorLotes.cs, el enum en
+// Domain/Ubicacion.cs y ConsumoLote sigue donde siempre estuvo.
+
+using Microsoft.EntityFrameworkCore;
 
 using Colibri.Api.Context;
 using Colibri.Api.Domain;
@@ -20,6 +25,7 @@ public class ConsumidorLotes : IConsumidorLotes
     public async Task<IReadOnlyList<ConsumoLote>> ConsumirAsync(
         int productoId,
         int cantidad,
+        Ubicacion ubicacion,
         string motivo,
         int? usuarioId,
         string? referenciaTipo,
@@ -44,11 +50,16 @@ public class ConsumidorLotes : IConsumidorLotes
         {
             // Se consultan ordenados por antigüedad: aunque la persona haya
             // elegido varios lotes, entre ellos sigue rigiendo FIFO.
+            //
+            // El filtro por ubicación es nuevo y es importante: un lote
+            // autorizado que está en bodega no sirve para una venta del
+            // mostrador, aunque sea del mismo producto.
             var lotes = await _db.Lotes.AsNoTracking()
                 .Where(l => autorizados.Contains(l.Id)
                          && l.ProductoId == productoId
+                         && l.Ubicacion == ubicacion
                          && l.Estado == EstadoLote.activo)
-                .OrderBy(l => l.FechaIngreso).ThenBy(l => l.Id)
+                .OrderBy(l => l.FechaVencimiento).ThenBy(l => l.FechaIngreso).ThenBy(l => l.Id)
                 .Select(l => new { l.Id, l.Codigo, l.VarasDisponibles })
                 .ToListAsync(ct);
 
@@ -56,8 +67,8 @@ public class ConsumidorLotes : IConsumidorLotes
             if (ajenos.Count > 0)
             {
                 _log.LogWarning(
-                    "Se ignoraron lotes autorizados que no aplican al producto {Producto}: {Lotes}",
-                    productoId, string.Join(", ", ajenos));
+                    "Se ignoraron lotes autorizados que no aplican al producto {Producto} en {Ubicacion}: {Lotes}",
+                    productoId, ubicacion, string.Join(", ", ajenos));
             }
 
             foreach (var lote in lotes)
@@ -68,10 +79,10 @@ public class ConsumidorLotes : IConsumidorLotes
                 if (toma <= 0) continue;
 
                 // Llamada explícita por lote: pedir exactamente lo que tiene
-                // hace que fn_consumir_lotes no siga hacia otros lotes, y así
-                // lo autorizado se respeta al pie de la letra.
+                // hace que fn_consumir no siga hacia otros lotes, y así lo
+                // autorizado se respeta al pie de la letra.
                 consumidos.AddRange(await LlamarAsync(
-                    productoId, toma, motivo, usuarioId, referenciaTipo,
+                    productoId, toma, ubicacion, motivo, usuarioId, referenciaTipo,
                     referenciaId, tipoMovimiento, lote.Id, ct));
 
                 restante -= toma;
@@ -81,7 +92,7 @@ public class ConsumidorLotes : IConsumidorLotes
         if (restante > 0)
         {
             consumidos.AddRange(await LlamarAsync(
-                productoId, restante, motivo, usuarioId, referenciaTipo,
+                productoId, restante, ubicacion, motivo, usuarioId, referenciaTipo,
                 referenciaId, tipoMovimiento, lotePreferido, ct));
         }
 
@@ -89,18 +100,21 @@ public class ConsumidorLotes : IConsumidorLotes
     }
 
     private async Task<List<ConsumoLote>> LlamarAsync(
-        int productoId, int cantidad, string motivo, int? usuarioId,
+        int productoId, int cantidad, Ubicacion ubicacion, string motivo, int? usuarioId,
         string? referenciaTipo, int? referenciaId, TipoMovimiento tipo,
         int? lotePreferido, CancellationToken ct)
     {
-        // El nombre del enum va como texto y se convierte en la base: es la
-        // única forma de pasar un tipo ENUM de PostgreSQL por parámetro.
+        // Los enum de PostgreSQL viajan como texto y se convierten en la base:
+        // es la única forma de pasarlos por parámetro.
         var nombreTipo = tipo.ToString();
+        var nombreUbicacion = ubicacion.ToString();
 
         return await _db.ConsumosLote
             .FromSqlInterpolated($@"
-                SELECT * FROM fn_consumir_lotes(
-                    {productoId}, {cantidad}, {motivo}, {usuarioId},
+                SELECT * FROM fn_consumir(
+                    {productoId}, {cantidad},
+                    {nombreUbicacion}::ubicacion_inventario,
+                    {motivo}, {usuarioId},
                     {referenciaTipo}, {referenciaId},
                     {nombreTipo}::tipo_movimiento, {lotePreferido})")
             .ToListAsync(ct);

@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using Colibri.Api.Common.Paginacion;
-
+using Colibri.Api.Domain;
 namespace Colibri.Api.Features.Inventario.Dtos;
 
 /* ===================== Lectura ===================== */
@@ -228,6 +228,12 @@ public class ArmarRequest
 {
     [Range(1, int.MaxValue, ErrorMessage = "Indica cuántas unidades vas a armar.")]
     public int Cantidad { get; set; } = 1;
+
+    /// <summary>
+    /// Dónde se arma. Bodega es producción para stock; venta es la vendedora
+    /// armando en el mesón con lo que tiene adelante.
+    /// </summary>
+    public Ubicacion Ubicacion { get; set; } = Ubicacion.bodega;
 
     /// <summary>
     /// Lotes de flor recuperada que se autorizan para este armado.

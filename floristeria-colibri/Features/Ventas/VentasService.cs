@@ -839,7 +839,7 @@ public class VentasService : IVentasService
         if (producto.ControlaLotes)
         {
             var consumidos = await _consumidor.ConsumirAsync(
-                productoId, cantidad, $"Venta {venta.Folio}", venta.UsuarioId,
+                productoId, cantidad, Ubicacion.venta, $"Venta {venta.Folio}", venta.UsuarioId,
                 "venta", venta.Id, TipoMovimiento.venta,
                 lotePreferido, lotesAutorizados, ct);
 
