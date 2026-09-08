@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+appsettings.Local.json
+appsettings.Production.json
+.vs/
+.vscode/
