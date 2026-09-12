@@ -2,6 +2,7 @@ using Colibri.Api.DbAccess;
 using Colibri.Api.Dto.Requests;
 using Colibri.Api.Models.Tablas;
 using Colibri.Api.Utils;
+using System.Text.Json;
 using Dapper;
 using Npgsql;
 
@@ -25,6 +26,51 @@ public class InventarioDAL
     private readonly IAccesoDatos _db;
 
     public InventarioDAL(IAccesoDatos db) => _db = db;
+
+    private static readonly JsonSerializerOptions JsonCamelReceta = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    public async Task<IEnumerable<LineaReceta>> ConsultarReceta(
+        int productoId, CancellationToken ct = default)
+        => await _db.ConsultarLista<LineaReceta>(
+            "SELECT * FROM sp_inv_c_receta(@productoId)", new { productoId }, ct);
+
+    public async Task<IEnumerable<ComponenteDisponible>> ConsultarComponentes(
+        CancellationToken ct = default)
+        => await _db.ConsultarLista<ComponenteDisponible>(
+            "SELECT * FROM sp_inv_c_componentes()", null, ct);
+
+    public async Task<ResultadoOp<ResultadoReceta>> GuardarReceta(
+        int productoId, RecetaRequest r, CancellationToken ct = default)
+    {
+        try
+        {
+            // Los alias son necesarios: el SP devuelve las columnas con
+            // prefijo o_ y Dapper las mapearía a OProductoId, que no existe.
+            var res = await _db.ConsultarUno<ResultadoReceta>(
+                """
+                SELECT o_producto_id AS producto_id,
+                       o_componentes AS componentes,
+                       o_costo_total AS costo_total
+                FROM sp_inv_u_receta(@productoId::int, @lineas::jsonb)
+                """,
+                new
+                {
+                    productoId,
+                    lineas = JsonSerializer.Serialize(r.Lineas, JsonCamelReceta)
+                }, ct);
+
+            return res is null
+                ? ResultadoOp<ResultadoReceta>.Error("La función no devolvió resultado.")
+                : ResultadoOp<ResultadoReceta>.Exito(res);
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ResultadoOp<ResultadoReceta>.Error(ErroresPg.Mensaje(ex));
+        }
+    }
 
     // ============================================================
     // Consultas
@@ -97,17 +143,29 @@ public class InventarioDAL
     /// la función rechazó la operación.
     /// </summary>
     public async Task<(int Id, string Error)> InsertarProducto(
-        CrearProductoRequest r, CancellationToken ct = default)
+    CrearProductoRequest r, CancellationToken ct = default)
     {
         try
         {
+            var p = new DynamicParameters(r);
+
+            // El enum va como texto: Dapper lo manda como integer, y Postgres
+            // no convierte un 0 a 'simple' —no sabe que ese índice
+            // corresponde a esa etiqueta.
+            //
+            // Sobrescribe el que trajo el request: el último Add gana.
+            p.Add("Tipo", r.Tipo.ToString());
+
             var id = await _db.Escalar<int>(
                 """
                 SELECT sp_inv_i_producto(
-                    @Codigo, @Nombre, @CategoriaId, @Tipo, @Precio, @Emoji,
-                    @Minimo, @Costo, @Stock, @ControlaLotes, @DiasVida)
+                    @Codigo::text, @Nombre::text, @CategoriaId::int,
+                    @Tipo::tipo_producto, @Precio::numeric,
+                    @PrecioRamo::numeric, @PrecioLiquidacion::numeric,
+                    @Emoji::text, @Minimo::int, @Costo::numeric,
+                    @Stock::int, @ControlaLotes::boolean, @DiasVida::int)
                 """,
-                r, ct);
+                p, ct);
 
             return (id, string.Empty);
         }
@@ -247,6 +305,7 @@ public class InventarioDAL
         p.Add("Hasta", f.Hasta);
         p.Add("Pagina", f.PaginaReal);
         p.Add("Tamano", f.TamanoReal);
+
 
         return await _db.ConsultarLista<Movimiento>(
             """

@@ -12,14 +12,25 @@ public class CrearProductoRequest
     public string Nombre { get; set; } = string.Empty;
     public int? CategoriaId { get; set; }
     public TipoProducto Tipo { get; set; }
+
     public decimal Precio { get; set; }
+
+    /// <summary>
+    /// Lo que vale cada vara al llevar varias. Opcional.
+    ///
+    /// También decide si conviene armar un ramo o vender las varas sueltas:
+    /// si el ramo se cobra menos que la suma de sus componentes a este
+    /// precio, armarlo deja menos plata.
+    /// </summary>
+    public decimal? PrecioRamo { get; set; }
+
+    /// <summary>Para sacar lo que está por vencer antes de botarlo.</summary>
+    public decimal? PrecioLiquidacion { get; set; }
+
     public string? Emoji { get; set; }
     public int Minimo { get; set; }
     public decimal Costo { get; set; }
-
-    /// <summary>Se ignora si ControlaLotes es true: ese stock entra por compra.</summary>
     public int Stock { get; set; }
-
     public bool ControlaLotes { get; set; }
     public int? DiasVida { get; set; }
 }

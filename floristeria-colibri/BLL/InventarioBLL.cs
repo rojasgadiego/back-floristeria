@@ -190,4 +190,32 @@ public class InventarioBLL
             Total = filas.Count > 0 ? filas[0].TotalFilas : 0
         };
     }
+
+     public async Task<IEnumerable<LineaReceta>> Receta(
+        int productoId, CancellationToken ct = default)
+        => productoId <= 0 ? [] : await _dal.ConsultarReceta(productoId, ct);
+
+    public async Task<IEnumerable<ComponenteDisponible>> Componentes(
+        CancellationToken ct = default)
+        => await _dal.ConsultarComponentes(ct);
+
+    /// <summary>
+    /// Reemplaza la receta completa. Una receta vacía es válida: puede que
+    /// el producto todavía no esté definido, y bloquearlo obligaría a
+    /// inventar componentes para poder guardar.
+    /// </summary>
+    public async Task<ResultadoOp<ResultadoReceta>> GuardarReceta(
+        int productoId, RecetaRequest r, CancellationToken ct = default)
+    {
+        if (productoId <= 0)
+            return ResultadoOp<ResultadoReceta>.Error("Indica el producto.");
+
+        if (r.Lineas.Any(l => l.Cantidad < 1))
+            return ResultadoOp<ResultadoReceta>.Error(
+                "Cada componente tiene que llevar al menos 1 unidad.");
+
+        // Que sean simples y que no haya ciclos lo valida el SP: sus
+        // mensajes nombran el componente que falla.
+        return await _dal.GuardarReceta(productoId, r, ct);
+    }
 }

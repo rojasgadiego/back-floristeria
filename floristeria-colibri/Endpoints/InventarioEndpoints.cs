@@ -107,6 +107,22 @@ public class InventarioEndpoints : EndpointsBase
             .WithSummary("Libro mayor: toda entrada y salida con su motivo y responsable")
             .Produces<ResponseDto>(200);
 
+         productos.MapGet("/componentes", Componentes)
+            .WithName("ComponentesDisponibles")
+            .WithSummary("Productos simples que pueden entrar en una receta")
+            .Produces<ResponseDto>(200);
+
+        productos.MapGet("/{id:int}/receta", Receta)
+            .WithName("RecetaProducto")
+            .WithSummary("Qué componentes lleva un armado y cuántos")
+            .Produces<ResponseDto>(200);
+
+        productos.MapPut("/{id:int}/receta", GuardarReceta)
+            .WithName("GuardarReceta")
+            .WithSummary("Reemplaza la receta completa")
+            .RequireAuthorization(Politicas.Inventario)
+            .Produces<ResponseDto>(200).Produces(400);
+
 
     }
 
@@ -261,4 +277,32 @@ public class InventarioEndpoints : EndpointsBase
     }
 
     #endregion
+
+     public async Task<ResponseDto> Receta(int id, InventarioBLL bll, CancellationToken ct)
+        => await Consultar(() => bll.Receta(id, ct), "receta");
+
+    public async Task<ResponseDto> Componentes(InventarioBLL bll, CancellationToken ct)
+        => await Consultar(() => bll.Componentes(ct), "componentes");
+
+    public async Task<ResponseDto> GuardarReceta(
+        int id, [FromBody] RecetaRequest peticion, InventarioBLL bll, CancellationToken ct)
+    {
+        try
+        {
+            var r = await bll.GuardarReceta(id, peticion, ct);
+
+            return r.Ok
+                ? CustomUtilz.CreateResponse(HttpStatusCodes.Ok,
+                    $"Receta guardada · {r.Datos!.Componentes} componente(s) · " +
+                    $"cuesta ${r.Datos.CostoTotal:N0} armar una",
+                    r.Datos)
+                : CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, r.Mensaje, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error al guardar la receta de {Id}", id);
+            return CustomUtilz.CreateResponse(
+                HttpStatusCodes.InternalServerError, $"Error al guardar: {ex.Message}", null);
+        }
+    }
 }

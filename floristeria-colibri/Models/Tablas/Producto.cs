@@ -15,6 +15,7 @@ namespace Colibri.Api.Models.Tablas;
 public class Producto
 {
     public int Id { get; set; }
+
     public string Codigo { get; set; } = string.Empty;
     public string Nombre { get; set; } = string.Empty;
     public string? Emoji { get; set; }
@@ -95,4 +96,50 @@ public class Producto
     /// </summary>
     [JsonIgnore]
     public long TotalFilas { get; set; }
+}
+
+
+/// <summary>
+/// Una línea de receta: qué componente y cuántos.
+///
+/// Trae el costo para que el formulario pueda sugerir el costo del armado:
+/// la suma de sus partes. Nadie calcula eso a mano con doce varas de tres
+/// especies distintas.
+/// </summary>
+public class LineaReceta
+{
+    public int ComponenteId { get; set; }
+    public string Componente { get; set; } = string.Empty;
+    public string? Emoji { get; set; }
+    public int Cantidad { get; set; }
+
+    public decimal CostoUnitario { get; set; }
+    public decimal CostoLinea { get; set; }
+    public decimal Precio { get; set; }
+
+    public bool ControlaLotes { get; set; }
+    public int Disponible { get; set; }
+}
+
+/// <summary>Un producto simple que puede entrar en una receta.</summary>
+public class ComponenteDisponible
+{
+    public int Id { get; set; }
+    public string Codigo { get; set; } = string.Empty;
+    public string Nombre { get; set; } = string.Empty;
+    public string? Emoji { get; set; }
+    public string? Categoria { get; set; }
+    public decimal Costo { get; set; }
+    public decimal Precio { get; set; }
+    public bool ControlaLotes { get; set; }
+    public int Disponible { get; set; }
+}
+
+public class ResultadoReceta
+{
+    public int ProductoId { get; set; }
+    public int Componentes { get; set; }
+
+    /// <summary>La suma de las partes: lo que cuesta armar una unidad.</summary>
+    public decimal CostoTotal { get; set; }
 }

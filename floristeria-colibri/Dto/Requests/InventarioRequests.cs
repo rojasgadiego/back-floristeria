@@ -57,3 +57,14 @@ public class MovimientoFiltro
         };
     }
 }
+
+public class RecetaRequest
+{
+    public List<LineaRecetaRequest> Lineas { get; set; } = [];
+}
+
+public class LineaRecetaRequest
+{
+    public int ComponenteId { get; set; }
+    public int Cantidad { get; set; }
+}
