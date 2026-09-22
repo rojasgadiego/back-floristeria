@@ -135,46 +135,6 @@ public class InventarioBLL
         return ResultadoOp<Categoria>.Exito(new Categoria { Id = id, Nombre = r.Nombre.Trim() });
     }
 
-        // ============================================================
-    // Mostrador
-    // ============================================================
-
-    /// <summary>
-    /// El id del usuario llega desde el endpoint, sacado del token. Si es 0 el
-    /// movimiento quedaría firmado por nadie, y el punto del libro mayor es
-    /// justamente saber quién movió qué.
-    /// </summary>
-    public async Task<ResultadoOp<ResultadoTraspaso>> Traspasar(
-        TraspasoRequest r, int usuarioId, CancellationToken ct = default)
-    {
-        if (r.ProductoId <= 0)
-            return ResultadoOp<ResultadoTraspaso>.Error("Debe indicar el producto.");
-
-        if (r.Cantidad < 1)
-            return ResultadoOp<ResultadoTraspaso>.Error("La cantidad debe ser al menos 1.");
-
-        if (usuarioId <= 0)
-            return ResultadoOp<ResultadoTraspaso>.Error("Sesión inválida.");
-
-        // Si hay stock suficiente o no, lo decide sp_inv_i_traspaso.
-        return await _dal.Traspasar(r.ProductoId, r.Cantidad, usuarioId, r.Detalle, ct);
-    }
-
-    public async Task<ResultadoOp<ResultadoTraspaso>> Retornar(
-        RetornoRequest r, int usuarioId, CancellationToken ct = default)
-    {
-        if (r.ProductoId <= 0)
-            return ResultadoOp<ResultadoTraspaso>.Error("Debe indicar el producto.");
-
-        if (r.Cantidad < 1)
-            return ResultadoOp<ResultadoTraspaso>.Error("La cantidad debe ser al menos 1.");
-
-        if (usuarioId <= 0)
-            return ResultadoOp<ResultadoTraspaso>.Error("Sesión inválida.");
-
-        return await _dal.Retornar(r.ProductoId, r.Cantidad, usuarioId, r.Detalle, ct);
-    }
-
     public async Task<ResultadoPagina<Movimiento>> ListarMovimientos(
         MovimientoFiltro filtro, CancellationToken ct = default)
     {

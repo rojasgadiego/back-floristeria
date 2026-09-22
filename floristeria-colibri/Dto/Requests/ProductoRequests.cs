@@ -44,6 +44,14 @@ public class ActualizarProductoRequest
     public string Nombre { get; set; } = string.Empty;
     public int? CategoriaId { get; set; }
     public decimal Precio { get; set; }
+
+    /// <summary>
+    /// Se mandan siempre, aunque vengan en null: el SP los sobrescribe tal
+    /// cual, y null es la forma de quitar un precio de ramo ya puesto.
+    /// </summary>
+    public decimal? PrecioRamo { get; set; }
+    public decimal? PrecioLiquidacion { get; set; }
+
     public string? Emoji { get; set; }
     public int? Minimo { get; set; }
     public decimal? Costo { get; set; }

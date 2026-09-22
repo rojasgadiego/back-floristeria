@@ -184,7 +184,9 @@ public class InventarioDAL
             await _db.Escalar<int>(
                 """
                 SELECT sp_inv_u_producto(
-                    @id, @Nombre, @CategoriaId, @Precio, @Emoji, @Minimo, @Costo, @DiasVida)
+                    @id::int, @Nombre::text, @CategoriaId::int, @Precio::numeric,
+                    @PrecioRamo::numeric, @PrecioLiquidacion::numeric,
+                    @Emoji::text, @Minimo::int, @Costo::numeric, @DiasVida::int)
                 """,
                 new
                 {
@@ -192,6 +194,8 @@ public class InventarioDAL
                     r.Nombre,
                     r.CategoriaId,
                     r.Precio,
+                    r.PrecioRamo,
+                    r.PrecioLiquidacion,
                     r.Emoji,
                     r.Minimo,
                     r.Costo,
@@ -251,46 +255,6 @@ public class InventarioDAL
         catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
         {
             return (0, ErroresPg.Mensaje(ex));
-        }
-    }
-
-    /// <summary>sp_inv_i_traspaso: baja de bodega al mostrador.</summary>
-    public async Task<ResultadoOp<ResultadoTraspaso>> Traspasar(
-        int productoId, int cantidad, int usuarioId, string? detalle, CancellationToken ct = default)
-    {
-        try
-        {
-            var r = await _db.ConsultarUno<ResultadoTraspaso>(
-                "SELECT * FROM sp_inv_i_traspaso(@productoId, @cantidad, @usuarioId, @detalle)",
-                new { productoId, cantidad, usuarioId, detalle }, ct);
-
-            return r is null
-                ? ResultadoOp<ResultadoTraspaso>.Error("La función no devolvió resultado.")
-                : ResultadoOp<ResultadoTraspaso>.Exito(r);
-        }
-        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
-        {
-            return ResultadoOp<ResultadoTraspaso>.Error(ErroresPg.Mensaje(ex));
-        }
-    }
-
-    /// <summary>sp_inv_i_retorno: devuelve del mostrador a bodega.</summary>
-    public async Task<ResultadoOp<ResultadoTraspaso>> Retornar(
-        int productoId, int cantidad, int usuarioId, string? detalle, CancellationToken ct = default)
-    {
-        try
-        {
-            var r = await _db.ConsultarUno<ResultadoTraspaso>(
-                "SELECT * FROM sp_inv_i_retorno(@productoId, @cantidad, @usuarioId, @detalle)",
-                new { productoId, cantidad, usuarioId, detalle }, ct);
-
-            return r is null
-                ? ResultadoOp<ResultadoTraspaso>.Error("La función no devolvió resultado.")
-                : ResultadoOp<ResultadoTraspaso>.Exito(r);
-        }
-        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
-        {
-            return ResultadoOp<ResultadoTraspaso>.Error(ErroresPg.Mensaje(ex));
         }
     }
 

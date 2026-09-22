@@ -39,7 +39,8 @@ public class AccesoBLL
     // ============================================================
 
     public async Task<ResultadoOp<LoginResponse>> Login(
-        LoginRequest r, CancellationToken ct = default)
+        LoginRequest r,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(r.Email) || string.IsNullOrWhiteSpace(r.Password))
             return ResultadoOp<LoginResponse>.Error("Debe indicar correo y contraseña.");
@@ -59,6 +60,7 @@ public class AccesoBLL
         if (!PasswordHasher.Verificar(r.Password, u.PasswordHash))
         {
             _log.LogWarning("Login fallido para {Email}", u.Email);
+
             // Mismo mensaje que arriba, a propósito: decir "la clave está mala"
             // ya confirma que ese correo existe.
             return ResultadoOp<LoginResponse>.Error("Correo o contraseña incorrectos.");
@@ -77,15 +79,21 @@ public class AccesoBLL
             Email = u.Email,
             Rol = u.Rol,
             Activo = u.Activo,
-            Permisos = PermisosDe(u.Rol)      // ← esto falta
+            Permisos = PermisosDe(u.Rol)
         };
 
         var (token, expira) = _jwt.Generar(usuario);
 
         // El sello no bloquea la sesión: si falla, el usuario ya entró y
         // negarle el acceso por no poder escribir una fecha sería absurdo.
-        try { await _dal.SellarUltimoAcceso(u.Id, ct); }
-        catch (Exception ex) { _log.LogWarning(ex, "No se pudo sellar el último acceso de {Id}", u.Id); }
+        try
+        {
+            await _dal.SellarUltimoAcceso(u.Id, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "No se pudo sellar el último acceso de {Id}", u.Id);
+        }
 
         return ResultadoOp<LoginResponse>.Exito(new LoginResponse
         {
@@ -95,13 +103,16 @@ public class AccesoBLL
         });
     }
 
-    /// <summary>Quién soy, según el token. Para que el front se refresque al recargar.</summary>
+    /// <summary>
+    /// Quién soy, según el token. Para que el front se refresque al recargar.
+    /// </summary>
     public async Task<Usuario?> Yo(int id, CancellationToken ct = default)
     {
         if (id <= 0) return null;
 
         var u = await _dal.ConsultarUsuario(id, ct);
         if (u is not null) u.Permisos = PermisosDe(u.Rol);
+
         return u;
     }
 
@@ -110,7 +121,9 @@ public class AccesoBLL
     // ============================================================
 
     public async Task<string> CambiarMiPassword(
-        int id, CambiarPasswordRequest r, CancellationToken ct = default)
+        int id,
+        CambiarPasswordRequest r,
+        CancellationToken ct = default)
     {
         if (id <= 0) return "Sesión inválida.";
         if (string.IsNullOrWhiteSpace(r.PasswordActual)) return "Debe indicar la contraseña actual.";
@@ -118,9 +131,10 @@ public class AccesoBLL
         var error = ValidarPassword(r.PasswordNueva);
         if (error is not null) return error;
 
-        var u = await _dal.BuscarParaLogin(
-            (await _dal.ConsultarUsuario(id, ct))?.Email ?? "", ct);
+        var usuarioActual = await _dal.ConsultarUsuario(id, ct);
+        if (usuarioActual is null) return "El usuario no existe.";
 
+        var u = await _dal.BuscarParaLogin(usuarioActual.Email, ct);
         if (u is null) return "El usuario no existe.";
 
         // Exigir la actual es lo que impide que una sesión abierta en un
@@ -134,9 +148,13 @@ public class AccesoBLL
         return await _dal.CambiarPassword(id, PasswordHasher.Hash(r.PasswordNueva), ct);
     }
 
-    /// <summary>Reseteo por administrador: no pide la anterior.</summary>
+    /// <summary>
+    /// Reseteo por administrador: no pide la anterior.
+    /// </summary>
     public async Task<string> ResetearPassword(
-        int id, ResetPasswordRequest r, CancellationToken ct = default)
+        int id,
+        ResetPasswordRequest r,
+        CancellationToken ct = default)
     {
         if (id <= 0) return "El ID debe ser mayor a 0.";
 
@@ -156,6 +174,7 @@ public class AccesoBLL
         if (string.IsNullOrWhiteSpace(clave)) return "Debe indicar la contraseña nueva.";
         if (clave.Length < 8) return "La contraseña debe tener al menos 8 caracteres.";
         if (clave.Length > 72) return "La contraseña no puede superar los 72 caracteres.";
+
         return null;
     }
 
@@ -164,18 +183,28 @@ public class AccesoBLL
     // ============================================================
 
     public async Task<IEnumerable<Usuario>> ListarUsuarios(
-        string? busqueda, RolUsuario? rol, bool? activo, CancellationToken ct = default)
+        string? busqueda,
+        RolUsuario? rol,
+        bool? activo,
+        CancellationToken ct = default)
         => await _dal.ConsultarUsuarios(
-            string.IsNullOrWhiteSpace(busqueda) ? null : busqueda.Trim(), rol, activo, ct);
+            string.IsNullOrWhiteSpace(busqueda) ? null : busqueda.Trim(),
+            rol,
+            activo,
+            ct);
 
     public async Task<Usuario?> ObtenerUsuario(int id, CancellationToken ct = default)
         => id <= 0 ? null : await _dal.ConsultarUsuario(id, ct);
 
     public async Task<ResultadoOp<Usuario>> CrearUsuario(
-        CrearUsuarioRequest r, CancellationToken ct = default)
+        CrearUsuarioRequest r,
+        CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(r.Nombre)) return ResultadoOp<Usuario>.Error("Debe indicar el nombre.");
-        if (string.IsNullOrWhiteSpace(r.Email)) return ResultadoOp<Usuario>.Error("Debe indicar el correo.");
+        if (string.IsNullOrWhiteSpace(r.Nombre))
+            return ResultadoOp<Usuario>.Error("Debe indicar el nombre.");
+
+        if (string.IsNullOrWhiteSpace(r.Email))
+            return ResultadoOp<Usuario>.Error("Debe indicar el correo.");
 
         var error = ValidarPassword(r.Password);
         if (error is not null) return ResultadoOp<Usuario>.Error(error);
@@ -184,22 +213,31 @@ public class AccesoBLL
         if (!string.IsNullOrWhiteSpace(err)) return ResultadoOp<Usuario>.Error(err);
 
         var creado = await _dal.ConsultarUsuario(id, ct);
+
         return creado is null
             ? ResultadoOp<Usuario>.Error("El usuario se creó pero no se pudo leer.")
             : ResultadoOp<Usuario>.Exito(creado);
     }
 
     public async Task<ResultadoOp<Usuario>> ActualizarUsuario(
-        int id, ActualizarUsuarioRequest r, CancellationToken ct = default)
+        int id,
+        ActualizarUsuarioRequest r,
+        CancellationToken ct = default)
     {
-        if (id <= 0) return ResultadoOp<Usuario>.Error("El ID debe ser mayor a 0.");
-        if (string.IsNullOrWhiteSpace(r.Nombre)) return ResultadoOp<Usuario>.Error("Debe indicar el nombre.");
-        if (string.IsNullOrWhiteSpace(r.Email)) return ResultadoOp<Usuario>.Error("Debe indicar el correo.");
+        if (id <= 0)
+            return ResultadoOp<Usuario>.Error("El ID debe ser mayor a 0.");
+
+        if (string.IsNullOrWhiteSpace(r.Nombre))
+            return ResultadoOp<Usuario>.Error("Debe indicar el nombre.");
+
+        if (string.IsNullOrWhiteSpace(r.Email))
+            return ResultadoOp<Usuario>.Error("Debe indicar el correo.");
 
         var err = await _dal.ActualizarUsuario(id, r, ct);
         if (!string.IsNullOrWhiteSpace(err)) return ResultadoOp<Usuario>.Error(err);
 
         var u = await _dal.ConsultarUsuario(id, ct);
+
         return u is null
             ? ResultadoOp<Usuario>.Error("El usuario no existe.")
             : ResultadoOp<Usuario>.Exito(u);
@@ -210,9 +248,13 @@ public class AccesoBLL
     /// se desactive solo y quede fuera de su propia instalación.
     /// </summary>
     public async Task<ResultadoOp<Usuario>> CambiarEstado(
-        int id, bool activo, int idSolicitante, CancellationToken ct = default)
+        int id,
+        bool activo,
+        int idSolicitante,
+        CancellationToken ct = default)
     {
-        if (id <= 0) return ResultadoOp<Usuario>.Error("El ID debe ser mayor a 0.");
+        if (id <= 0)
+            return ResultadoOp<Usuario>.Error("El ID debe ser mayor a 0.");
 
         if (id == idSolicitante && !activo)
             return ResultadoOp<Usuario>.Error("No puedes desactivar tu propia cuenta.");
@@ -221,17 +263,13 @@ public class AccesoBLL
         if (!string.IsNullOrWhiteSpace(err)) return ResultadoOp<Usuario>.Error(err);
 
         var u = await _dal.ConsultarUsuario(id, ct);
+
         return u is null
             ? ResultadoOp<Usuario>.Error("El usuario no existe.")
             : ResultadoOp<Usuario>.Exito(u);
     }
 
     /// <summary>
-    /// El front usa esto para decidir qué DIBUJA. Lo que se PERMITE lo deciden las
-    /// políticas de cada endpoint — si acá dice que sí y allá que no, el resultado
-    /// es un botón que devuelve 403.
-    /// </summary>
-        /// <summary>
     /// El front usa esto para decidir qué DIBUJA. Lo que se PERMITE lo deciden
     /// las políticas de cada endpoint — si acá dice que sí y allá que no, el
     /// resultado es un botón que devuelve 403.
@@ -248,7 +286,12 @@ public class AccesoBLL
         // venta al público, ni toca el equipo.
         RolUsuario.bodega =>
         [
-            "dashboard", "inventario", "lotes", "compras", "mermas", "reportes"
+            "dashboard",
+            "inventario",
+            "lotes",
+            "compras",
+            "mermas",
+            "reportes"
         ],
 
         // Vendedor atiende el mesón: vende, cotiza y consulta clientes. Ve el
@@ -256,8 +299,14 @@ public class AccesoBLL
         // política Inventario del endpoint, no este permiso—.
         RolUsuario.vendedor =>
         [
-            "dashboard", "pos", "ventas", "cotizaciones", "clientes",
-            "inventario", "lotes", "promociones"
+            "dashboard",
+            "pos",
+            "ventas",
+            "cotizaciones",
+            "clientes",
+            "inventario",
+            "lotes",
+            "promociones"
         ],
 
         _ => []

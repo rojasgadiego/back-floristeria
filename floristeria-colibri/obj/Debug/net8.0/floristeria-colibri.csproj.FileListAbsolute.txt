@@ -50,3 +50,11 @@ C:\Users\Dieg0\OneDrive\Documentos\back-floristeria\floristeria-colibri\obj\Debu
 C:\Users\Dieg0\OneDrive\Documentos\back-floristeria\floristeria-colibri\obj\Debug\net8.0\floristeria-colibri.pdb
 C:\Users\Dieg0\OneDrive\Documentos\back-floristeria\floristeria-colibri\obj\Debug\net8.0\floristeria-colibri.genruntimeconfig.cache
 C:\Users\Dieg0\OneDrive\Documentos\back-floristeria\floristeria-colibri\obj\Debug\net8.0\ref\floristeria-colibri.dll
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\appsettings.Development.json
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\appsettings.json
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.staticwebassets.endpoints.json
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.exe
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.deps.json
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.runtimeconfig.json
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.dll
+C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.pdb
