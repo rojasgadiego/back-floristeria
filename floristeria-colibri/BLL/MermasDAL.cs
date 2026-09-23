@@ -32,8 +32,12 @@ public class MermasDAL
     // Consultas
     // ============================================================
 
+    /// <summary>
+    /// `soloDe`: null para el administrador (todas); con un id, solo las
+    /// mermas que registró esa persona.
+    /// </summary>
     public async Task<IEnumerable<Merma>> Consultar(
-        MermaFiltro f, CancellationToken ct = default)
+        MermaFiltro f, int? soloDe, CancellationToken ct = default)
     {
         var p = new DynamicParameters();
         p.Add("Buscar", f.Buscar);
@@ -48,22 +52,72 @@ public class MermasDAL
         p.Add("Hasta", f.Hasta);
         p.Add("Pagina", f.PaginaReal);
         p.Add("Tamano", f.TamanoReal);
+        p.Add("SoloDe", soloDe);
 
         return await _db.ConsultarLista<Merma>(
             """
             SELECT * FROM sp_mer_c_mermas(
                 @Buscar::text, @ProductoId::int, @LoteId::int, @Motivo::text,
                 @Destino::destino_merma, @Revertida::boolean,
-                @Desde::date, @Hasta::date, @Pagina::int, @Tamano::int)
+                @Desde::date, @Hasta::date, @Pagina::int, @Tamano::int,
+                @SoloDe::int)
             """,
             p, ct);
     }
 
-    public async Task<Merma?> ConsultarUna(int id, CancellationToken ct = default)
-        => await _db.ConsultarUno<Merma>("SELECT * FROM sp_mer_c_merma(@id)", new { id }, ct);
+    public async Task<Merma?> ConsultarUna(int id, int? soloDe = null, CancellationToken ct = default)
+        => await _db.ConsultarUno<Merma>(
+            "SELECT * FROM sp_mer_c_merma(@id, @soloDe::int)", new { id, soloDe }, ct);
 
-    public async Task<IEnumerable<MotivoMerma>> ConsultarMotivos(CancellationToken ct = default)
-        => await _db.ConsultarLista<MotivoMerma>("SELECT * FROM sp_mer_c_motivos()", null, ct);
+    /// <summary>`todos` incluye los apagados: la pantalla de administración.</summary>
+    public async Task<IEnumerable<MotivoMerma>> ConsultarMotivos(bool todos, CancellationToken ct = default)
+        => await _db.ConsultarLista<MotivoMerma>(
+            "SELECT * FROM sp_mer_c_motivos(@todos)", new { todos }, ct);
+
+    public async Task<(int Id, string Error)> CrearMotivo(
+        MotivoMermaRequest r, CancellationToken ct = default)
+    {
+        try
+        {
+            var id = await _db.Escalar<int>(
+                """
+                SELECT sp_mer_i_motivo(@Nombre::text, @Categoria::text,
+                    @RequiereDetalle::boolean, @Destino::destino_merma)
+                """,
+                new { r.Nombre, r.Categoria, r.RequiereDetalle, Destino = r.DestinoSugerido?.ToString() }, ct);
+
+            return (id, string.Empty);
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return (0, ErroresPg.Mensaje(ex));
+        }
+    }
+
+    public async Task<string> ActualizarMotivo(
+        int id, MotivoMermaRequest r, CancellationToken ct = default)
+    {
+        try
+        {
+            await _db.Escalar<int>(
+                """
+                SELECT sp_mer_u_motivo(@id, @Nombre::text, @Categoria::text,
+                    @RequiereDetalle::boolean, @Destino::destino_merma,
+                    @Activo::boolean, @Orden::int)
+                """,
+                new
+                {
+                    id, r.Nombre, r.Categoria, r.RequiereDetalle,
+                    Destino = r.DestinoSugerido?.ToString(), r.Activo, r.Orden
+                }, ct);
+
+            return string.Empty;
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ErroresPg.Mensaje(ex);
+        }
+    }
 
     /// <summary>
     /// Acepta el código de un lote o de una partida, o el QR completo de
@@ -81,29 +135,38 @@ public class MermasDAL
     // Resumen
     // ============================================================
 
+    // `soloDe` como en el listado. Con un id, el resumen tampoco trae las
+    // ventas del local: son un número del negocio, no de una persona.
+
     public async Task<ResumenMermas?> ConsultarResumen(
-        DateOnly? desde, DateOnly? hasta, CancellationToken ct = default)
+        DateOnly? desde, DateOnly? hasta, int? soloDe, CancellationToken ct = default)
         => await _db.ConsultarUno<ResumenMermas>(
-            "SELECT * FROM sp_mer_c_resumen(@desde::date, @hasta::date)",
-            new { desde, hasta }, ct);
+            "SELECT * FROM sp_mer_c_resumen(@desde::date, @hasta::date, @soloDe::int)",
+            new { desde, hasta, soloDe }, ct);
 
     public async Task<IEnumerable<MermaPorDestino>> PorDestino(
-        DateOnly? desde, DateOnly? hasta, CancellationToken ct = default)
+        DateOnly? desde, DateOnly? hasta, int? soloDe, CancellationToken ct = default)
         => await _db.ConsultarLista<MermaPorDestino>(
-            "SELECT * FROM sp_mer_c_resumen_destino(@desde::date, @hasta::date)",
-            new { desde, hasta }, ct);
+            "SELECT * FROM sp_mer_c_resumen_destino(@desde::date, @hasta::date, @soloDe::int)",
+            new { desde, hasta, soloDe }, ct);
 
     public async Task<IEnumerable<MermaPorProducto>> PorProducto(
-        DateOnly? desde, DateOnly? hasta, CancellationToken ct = default)
+        DateOnly? desde, DateOnly? hasta, int? soloDe, CancellationToken ct = default)
         => await _db.ConsultarLista<MermaPorProducto>(
-            "SELECT * FROM sp_mer_c_resumen_producto(@desde::date, @hasta::date)",
-            new { desde, hasta }, ct);
+            "SELECT * FROM sp_mer_c_resumen_producto(@desde::date, @hasta::date, @soloDe::int)",
+            new { desde, hasta, soloDe }, ct);
+
+    public async Task<IEnumerable<MermaPorCategoria>> PorCategoria(
+        DateOnly? desde, DateOnly? hasta, int? soloDe, CancellationToken ct = default)
+        => await _db.ConsultarLista<MermaPorCategoria>(
+            "SELECT * FROM sp_mer_c_resumen_categoria(@desde::date, @hasta::date, @soloDe::int)",
+            new { desde, hasta, soloDe }, ct);
 
     public async Task<IEnumerable<MermaPorMotivo>> PorMotivo(
-        DateOnly? desde, DateOnly? hasta, CancellationToken ct = default)
+        DateOnly? desde, DateOnly? hasta, int? soloDe, CancellationToken ct = default)
         => await _db.ConsultarLista<MermaPorMotivo>(
-            "SELECT * FROM sp_mer_c_resumen_motivo(@desde::date, @hasta::date)",
-            new { desde, hasta }, ct);
+            "SELECT * FROM sp_mer_c_resumen_motivo(@desde::date, @hasta::date, @soloDe::int)",
+            new { desde, hasta, soloDe }, ct);
 
     // ============================================================
     // Patrones
@@ -229,7 +292,8 @@ public class MermasDAL
             new { productoId, cantidad }, ct);
 
     public async Task<ResultadoOp<ResultadoDesarme>> Desarmar(
-        int productoId, DesarmeRequest r, int usuarioId, CancellationToken ct = default)
+        int productoId, DesarmeRequest r, string? autorizadoPor, int usuarioId,
+        CancellationToken ct = default)
     {
         try
         {
@@ -240,6 +304,7 @@ public class MermasDAL
             p.Add("Detalle", r.Detalle);
             p.Add("Lineas", JsonSerializer.Serialize(r.Lineas, JsonCamel));
             p.Add("UsuarioId", usuarioId);
+            p.Add("AutorizadoPor", autorizadoPor);
 
             // Los alias son necesarios: el SP devuelve las columnas con
             // prefijo o_ y Dapper las mapearía a OProductoId, que no existe
@@ -255,7 +320,8 @@ public class MermasDAL
                        o_perdidas    AS perdidas
                 FROM sp_mer_i_desarme(
                     @ProductoId::int, @Cantidad::int, @Motivo::text,
-                    @Detalle::text, @Lineas::jsonb, @UsuarioId::int)
+                    @Detalle::text, @Lineas::jsonb, @UsuarioId::int,
+                    @AutorizadoPor::text)
                 """,
                 p, ct);
 

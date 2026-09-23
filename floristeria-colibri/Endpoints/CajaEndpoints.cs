@@ -52,11 +52,18 @@ public class CajaEndpoints : EndpointsBase
     /// que la ruta está mal; la ausencia de turno es el estado normal antes
     /// de que alguien abra.
     /// </summary>
-    public async Task<ResponseDto> Actual(CajaBLL bll, CancellationToken ct)
+    /// <summary>
+    /// Null para el administrador (ve el turno completo); el id del token
+    /// para cualquier otro. Un vendedor ve solo lo suyo, jamás lo de otros.
+    /// </summary>
+    private static int? SoloDe(HttpContext http)
+        => http.User.IsInRole("admin") ? null : UsuarioActual(http);
+
+    public async Task<ResponseDto> Actual(CajaBLL bll, HttpContext http, CancellationToken ct)
     {
         try
         {
-            var caja = await bll.Actual(ct);
+            var caja = await bll.Actual(SoloDe(http), ct);
 
             return CustomUtilz.CreateResponse(
                 HttpStatusCodes.Ok,
@@ -71,8 +78,8 @@ public class CajaEndpoints : EndpointsBase
         }
     }
 
-    public async Task<ResponseDto> Resumen(int id, CajaBLL bll, CancellationToken ct)
-        => await ConsultarUno(() => bll.Resumen(id, ct), "Caja", $"No existe la caja {id}.");
+    public async Task<ResponseDto> Resumen(int id, CajaBLL bll, HttpContext http, CancellationToken ct)
+        => await ConsultarUno(() => bll.Resumen(id, SoloDe(http), ct), "Caja", $"No existe la caja {id}.");
 
     /// <summary>
     /// El usuarioId del filtro se IGNORA si viene del cliente: se arma desde
@@ -82,8 +89,13 @@ public class CajaEndpoints : EndpointsBase
     public async Task<ResponseDto> Historial(
         [AsParameters] CajaFiltro filtro, CajaBLL bll, HttpContext http, CancellationToken ct)
     {
-        filtro.UsuarioId = http.User.IsInRole("admin") ? filtro.UsuarioId : UsuarioActual(http);
-        return await Consultar(() => bll.Historial(filtro, ct), "turnos de caja");
+        var soloDe = SoloDe(http);
+
+        // El admin puede filtrar por persona; a un vendedor se le ignora lo
+        // que mande y ve los turnos en los que él vendió, con sus totales.
+        if (soloDe is not null) filtro.UsuarioId = null;
+
+        return await Consultar(() => bll.Historial(filtro, soloDe, ct), "turnos de caja");
     }
 
     public async Task<ResponseDto> Abrir(
@@ -115,10 +127,17 @@ public class CajaEndpoints : EndpointsBase
     {
         try
         {
-            var r = await bll.Cerrar(peticion, UsuarioActual(http), ct);
+            var ciego = SoloDe(http) is not null;
+            var r = await bll.Cerrar(peticion, UsuarioActual(http), ciego, ct);
 
             if (!r.Ok)
                 return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, r.Mensaje, null);
+
+            // Arqueo ciego: el vendedor no sabe si sobró o faltó. Ese número
+            // incluye lo que cobraron los demás; lo revisa un administrador.
+            if (ciego)
+                return CustomUtilz.CreateResponse(HttpStatusCodes.Ok,
+                    "Caja cerrada · el arqueo lo revisa un administrador", r.Datos);
 
             var d = r.Datos!.Diferencia ?? 0;
             var mensaje = d switch

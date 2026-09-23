@@ -9,9 +9,10 @@ namespace Colibri.Api.Endpoints;
 /// <summary>
 /// Endpoints de MERMAS.
 ///
-/// Leer es de VerInventario; registrar, de Admin y Bodega; revertir y ver los
-/// patrones, solo de Admin: el primero deshace un registro de pérdida, y el
-/// segundo muestra el comportamiento de cada persona.
+/// Leer es de VerInventario. Registrar, de cualquiera: bodega y admin desde
+/// cualquier origen, el vendedor solo desde una partida del mostrador (lo
+/// decide la BLL). Descartar un lote y desarmar, de Admin y Bodega. Revertir,
+/// ver los patrones y editar el catálogo de motivos, solo de Admin.
 /// </summary>
 public class MermasEndpoints : EndpointsBase
 {
@@ -34,8 +35,19 @@ public class MermasEndpoints : EndpointsBase
 
         mer.MapGet("/motivos", Motivos)
             .WithName("MotivosMerma")
-            .WithSummary("Los ya usados primero. Se ofrecen en select para que el reporte agrupe.")
+            .WithSummary("El catálogo por categoría. ?todos=true incluye los apagados (solo admin).")
             .Produces<ResponseDto>(200);
+
+        mer.MapPost("/motivos", CrearMotivo)
+            .WithName("CrearMotivoMerma")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(201).Produces(400);
+
+        mer.MapPut("/motivos/{id:int}", ActualizarMotivo)
+            .WithName("ActualizarMotivoMerma")
+            .WithSummary("Renombrar, recategorizar o apagar. Las mermas registradas no cambian.")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200).Produces(400);
 
         mer.MapGet("/resumen", Resumen)
             .WithName("ResumenMermas")
@@ -72,7 +84,6 @@ public class MermasEndpoints : EndpointsBase
         mer.MapPost("/", Registrar)
             .WithName("RegistrarMerma")
             .WithSummary("Saca varas del inventario. El costo lo pone el sistema, no el formulario.")
-            .RequireAuthorization(Politicas.Inventario)
             .Produces<ResponseDto>(201).Produces(400);
 
         mer.MapPost("/lote/{loteId:int}/descartar", DescartarLote)
@@ -94,22 +105,34 @@ public class MermasEndpoints : EndpointsBase
             .Produces<ResponseDto>(200).Produces(400);
     }
 
+    /// <summary>
+    /// Null para el administrador (ve todas); el id del token para cualquier
+    /// otro. Cada persona ve solo las mermas que registró, jamás las de otros.
+    /// </summary>
+    private static int? SoloDe(HttpContext http)
+        => http.User.IsInRole("admin") ? null : UsuarioActual(http);
+
+    /// <summary>El vendedor merma solo desde el mostrador.</summary>
+    private static bool SoloMostrador(HttpContext http)
+        => !http.User.IsInRole("admin") && !http.User.IsInRole("bodega");
+
     #region Consultas
 
     public async Task<ResponseDto> Listar(
-        [AsParameters] MermaFiltro filtro, MermasBLL bll, CancellationToken ct)
-        => await Consultar(() => bll.Listar(filtro, ct), "mermas");
+        [AsParameters] MermaFiltro filtro, MermasBLL bll, HttpContext http, CancellationToken ct)
+        => await Consultar(() => bll.Listar(filtro, SoloDe(http), ct), "mermas");
 
-    public async Task<ResponseDto> Obtener(int id, MermasBLL bll, CancellationToken ct)
-        => await ConsultarUno(() => bll.Obtener(id, ct), "Merma", $"No existe la merma {id}.");
+    public async Task<ResponseDto> Obtener(int id, MermasBLL bll, HttpContext http, CancellationToken ct)
+        => await ConsultarUno(() => bll.Obtener(id, SoloDe(http), ct), "Merma", $"No existe la merma {id}.");
 
-    public async Task<ResponseDto> Motivos(MermasBLL bll, CancellationToken ct)
-        => await Consultar(() => bll.Motivos(ct), "motivos");
+    public async Task<ResponseDto> Motivos(
+        [FromQuery] bool? todos, MermasBLL bll, HttpContext http, CancellationToken ct)
+        => await Consultar(() => bll.Motivos(todos == true && http.User.IsInRole("admin"), ct), "motivos");
 
     public async Task<ResponseDto> Resumen(
         [FromQuery] DateOnly? desde, [FromQuery] DateOnly? hasta,
-        MermasBLL bll, CancellationToken ct)
-        => await ConsultarUno(() => bll.Resumen(desde, hasta, ct),
+        MermasBLL bll, HttpContext http, CancellationToken ct)
+        => await ConsultarUno(() => bll.Resumen(desde, hasta, SoloDe(http), ct),
             "Resumen", "No se pudo calcular el resumen.");
 
     public async Task<ResponseDto> PlanDesarme(
@@ -122,11 +145,11 @@ public class MermasEndpoints : EndpointsBase
     /// ver por qué no sirve. Un 404 haría pensar que la etiqueta está mala.
     /// </summary>
     public async Task<ResponseDto> Escanear(
-        string codigo, MermasBLL bll, CancellationToken ct)
+        string codigo, MermasBLL bll, HttpContext http, CancellationToken ct)
     {
         try
         {
-            var o = await bll.Escanear(codigo, ct);
+            var o = await bll.Escanear(codigo, SoloMostrador(http), ct);
 
             if (o is null)
                 return CustomUtilz.CreateResponse(
@@ -176,11 +199,23 @@ public class MermasEndpoints : EndpointsBase
     public async Task<ResponseDto> Registrar(
         [FromBody] RegistrarMermaRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.Registrar(peticion, UsuarioActual(http), ct),
+        => await Escribir(() => bll.Registrar(peticion, UsuarioActual(http), SoloMostrador(http), ct),
             m => m.CantidadRecuperada > 0
                 ? $"{m.Cantidad} de {m.Producto} · {m.CantidadRecuperada} recuperadas en {m.LoteRecuperacion}"
                 : $"{m.Cantidad} de {m.Producto} · ${m.CostoPerdido:N0} de pérdida",
             HttpStatusCodes.Created, "registrar la merma");
+
+    public async Task<ResponseDto> CrearMotivo(
+        [FromBody] MotivoMermaRequest peticion, MermasBLL bll, CancellationToken ct)
+        => await Escribir(() => bll.CrearMotivo(peticion, ct),
+            m => $"Motivo \"{m.Motivo}\" agregado",
+            HttpStatusCodes.Created, "crear el motivo");
+
+    public async Task<ResponseDto> ActualizarMotivo(
+        int id, [FromBody] MotivoMermaRequest peticion, MermasBLL bll, CancellationToken ct)
+        => await Escribir(() => bll.ActualizarMotivo(id, peticion, ct),
+            m => m.Activo ? $"Motivo \"{m.Motivo}\" guardado" : $"Motivo \"{m.Motivo}\" apagado",
+            HttpStatusCodes.Ok, "guardar el motivo");
 
     public async Task<ResponseDto> DescartarLote(
         int loteId, [FromBody] DescartarLoteRequest peticion, MermasBLL bll,
@@ -193,7 +228,9 @@ public class MermasEndpoints : EndpointsBase
         int id, [FromBody] RevertirMermaRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
         => await Escribir(() => bll.Revertir(id, peticion?.Motivo ?? "", UsuarioActual(http), ct),
-            m => $"Merma revertida · {m.Cantidad} de {m.Producto} volvieron al inventario",
+            m => m.DesarmeGrupo is not null
+                ? "Desarme revertido · el armado volvió al stock y se anularon los lotes recuperados"
+                : $"Merma revertida · {m.Cantidad} de {m.Producto} volvieron al inventario",
             HttpStatusCodes.Ok, "revertir la merma");
 
     public async Task<ResponseDto> Desarmar(

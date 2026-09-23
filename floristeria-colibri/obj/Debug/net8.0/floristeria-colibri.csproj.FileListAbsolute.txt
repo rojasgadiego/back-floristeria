@@ -58,3 +58,11 @@ C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-fron
 C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.runtimeconfig.json
 C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.dll
 C:\Users\Dieg0\AppData\Local\Temp\claude\C--Users-Dieg0-OneDrive-Documentos-front-floristeria\9e2bb0b5-544a-412c-ab58-c6e07f72d270\scratchpad\backbuild\floristeria-colibri.pdb
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\appsettings.Development.json
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\appsettings.json
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\floristeria-colibri.staticwebassets.endpoints.json
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\floristeria-colibri.exe
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\floristeria-colibri.deps.json
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\floristeria-colibri.runtimeconfig.json
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\floristeria-colibri.dll
+C:\Users\Dieg0\AppData\Local\Temp\colibri_build\floristeria-colibri.pdb

@@ -13,17 +13,30 @@ public class CajaBLL
     public CajaBLL(CajaDAL dal) => _dal = dal;
 
     /// <summary>Null si no hay turno abierto. El front lo usa para decidir si se puede vender.</summary>
-    public async Task<Caja?> Actual(CancellationToken ct = default)
-        => await _dal.ConsultarActual(ct);
+    // `soloDe`: null = administrador, ve el turno completo. Con un id, lo
+    // que ve ese vendedor: sus totales y el arqueo en null. Lo decide el
+    // endpoint desde el token, nunca el cliente.
 
-    public async Task<Caja?> Resumen(int id, CancellationToken ct = default)
-        => id <= 0 ? null : await _dal.ConsultarCaja(id, ct);
+    public async Task<Caja?> Actual(int? soloDe = null, CancellationToken ct = default)
+        => soloDe is null
+            ? await _dal.ConsultarActual(ct)
+            : await _dal.ConsultarCajaDe(null, soloDe.Value, ct);
+
+    public async Task<Caja?> Resumen(int id, int? soloDe = null, CancellationToken ct = default)
+    {
+        if (id <= 0) return null;
+        return soloDe is null
+            ? await _dal.ConsultarCaja(id, ct)
+            : await _dal.ConsultarCajaDe(id, soloDe.Value, ct);
+    }
 
     public async Task<ResultadoPagina<Caja>> Historial(
-        CajaFiltro filtro, CancellationToken ct = default)
+        CajaFiltro filtro, int? soloDe = null, CancellationToken ct = default)
     {
         filtro.Normalizar();
-        var filas = (await _dal.ConsultarHistorial(filtro, ct)).ToList();
+        var filas = soloDe is null
+            ? (await _dal.ConsultarHistorial(filtro, ct)).ToList()
+            : (await _dal.ConsultarHistorialDe(filtro, soloDe.Value, ct)).ToList();
 
         return new ResultadoPagina<Caja>
         {
@@ -59,8 +72,12 @@ public class CajaBLL
     /// la pantalla muestra inmediatamente después, y pedirlo en una segunda
     /// llamada dejaría un parpadeo justo en el momento que más importa.
     /// </summary>
+    /// <summary>
+    /// Con `ciego`, lo que se devuelve es la vista del vendedor: puede cerrar,
+    /// pero no ve el esperado ni la diferencia, que suman lo de todos.
+    /// </summary>
     public async Task<ResultadoOp<Caja>> Cerrar(
-        CerrarCajaRequest r, int usuarioId, CancellationToken ct = default)
+        CerrarCajaRequest r, int usuarioId, bool ciego = false, CancellationToken ct = default)
     {
         if (usuarioId <= 0) return ResultadoOp<Caja>.Error("Sesión inválida.");
 
@@ -70,7 +87,9 @@ public class CajaBLL
         var (id, error) = await _dal.Cerrar(r.EfectivoContado, usuarioId, r.Nota, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Caja>.Error(error);
 
-        var caja = await _dal.ConsultarCaja(id, ct);
+        var caja = ciego
+            ? await _dal.ConsultarCajaDe(id, usuarioId, ct)
+            : await _dal.ConsultarCaja(id, ct);
         return caja is null
             ? ResultadoOp<Caja>.Error("La caja se cerró pero no se pudo leer el resumen.")
             : ResultadoOp<Caja>.Exito(caja);

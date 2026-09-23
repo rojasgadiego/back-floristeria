@@ -35,6 +35,12 @@ public class MostradorBLL
         return string.IsNullOrWhiteSpace(limpio) ? null : await _dal.Escanear(limpio, ct);
     }
 
+    public async Task<string?> QrDePartida(string codigo, CancellationToken ct = default)
+    {
+        var limpio = QRCodeHelper.ExtraerCodigo(codigo);
+        return string.IsNullOrWhiteSpace(limpio) ? null : await _dal.QrDePartida(limpio, ct);
+    }
+
     public async Task<IEnumerable<PartidaOrden>> DeProducto(
         int productoId, CancellationToken ct = default)
         => productoId <= 0 ? [] : await _dal.DeProducto(productoId, ct);

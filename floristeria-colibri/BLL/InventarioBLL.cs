@@ -136,11 +136,11 @@ public class InventarioBLL
     }
 
     public async Task<ResultadoPagina<Movimiento>> ListarMovimientos(
-        MovimientoFiltro filtro, CancellationToken ct = default)
+        MovimientoFiltro filtro, int? soloDe = null, CancellationToken ct = default)
     {
         filtro.Normalizar();
 
-        var filas = (await _dal.ConsultarMovimientos(filtro, ct)).ToList();
+        var filas = (await _dal.ConsultarMovimientos(filtro, soloDe, ct)).ToList();
 
         return new ResultadoPagina<Movimiento>
         {

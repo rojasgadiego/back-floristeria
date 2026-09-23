@@ -32,6 +32,14 @@ public class MostradorDAL
         => await _db.ConsultarUno<PartidaEscaneada>(
             "SELECT * FROM sp_ven_c_partida(@codigo)", new { codigo }, ct);
 
+    /// <summary>
+    /// El contenido del QR de una partida, tal como lo arma la base
+    /// (vw_partidas.qr). Null si no existe.
+    /// </summary>
+    public async Task<string?> QrDePartida(string codigo, CancellationToken ct = default)
+        => await _db.Escalar<string>(
+            "SELECT qr FROM vw_partidas WHERE codigo = upper(btrim(@codigo))", new { codigo }, ct);
+
     public async Task<IEnumerable<PartidaOrden>> DeProducto(
         int productoId, CancellationToken ct = default)
         => await _db.ConsultarLista<PartidaOrden>(

@@ -66,12 +66,19 @@ public class VentasEndpoints : EndpointsBase
     /// </summary>
     public async Task<ResponseDto> Registrar(
         [FromBody] RegistrarVentaRequest peticion, VentasBLL bll,
-        HttpContext http, CancellationToken ct)
+        CotizacionesBLL cotizaciones, HttpContext http, CancellationToken ct)
     {
         try
         {
             if (peticion is null)
                 return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, "Request inválido", null);
+
+            // Cobrar un evento: un vendedor solo cierra los que creó. Para él
+            // una cotización ajena no existe, igual que en su listado.
+            if (peticion.CotizacionId is int cotId && !EsAdmin(http)
+                && !await cotizaciones.EsVisible(cotId, UsuarioActual(http), ct))
+                return CustomUtilz.CreateResponse(
+                    HttpStatusCodes.BadRequest, "La cotización no existe.", null);
 
             var r = await bll.Registrar(peticion, UsuarioActual(http), ct);
 

@@ -21,28 +21,35 @@ public class ReportesEndpoints : EndpointsBase
 
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
+        // Dos grupos sobre la misma ruta: las políticas del grupo y las del
+        // endpoint se SUMAN —todas tienen que cumplirse—, así que un endpoint
+        // no puede "abrirse" dentro de un grupo de administrador. Con un solo
+        // grupo, el panel quedaba solo para admin.
+        var abiertos = app.MapGroup("/api/reportes")
+            .WithTags("Reportes")
+            .AddEndpointFilter<RespuestaFilter>();
+
         var rep = app.MapGroup("/api/reportes")
             .WithTags("Reportes")
             .RequireAuthorization(Politicas.Admin)
             .AddEndpointFilter<RespuestaFilter>();
 
-        // El panel se abre a todos: RequireAuthorization sin política
-        // reemplaza a la del grupo.
-        rep.MapGet("/panel", Panel)
+        // Lo ve todo el equipo, pero cada uno con sus números: ver Panel().
+        abiertos.MapGet("/panel", Panel)
             .WithName("PanelInicio")
             .WithSummary("Cómo va hoy, qué hay que atender y qué viene")
             .RequireAuthorization()
             .Produces<ResponseDto>(200);
 
-        rep.MapGet("/inventario", Inventario)
+        abiertos.MapGet("/inventario", Inventario)
             .WithName("ValorInventario")
             .WithSummary("La foto de hoy: cuánto hay y cuánto vale")
             .RequireAuthorization(Politicas.VerInventario)
             .Produces<ResponseDto>(200);
 
+        // Solo admin: trae costo y utilidad del turno completo.
         rep.MapGet("/turno/{cajaId:int}", Turno)
             .WithName("DesgloseTurno")
-            .RequireAuthorization(Politicas.Vender)
             .Produces<ResponseDto>(200).Produces(404);
 
         rep.MapGet("/resultado", Resultado)
@@ -61,9 +68,21 @@ public class ReportesEndpoints : EndpointsBase
             .Produces<ResponseDto>(200);
     }
 
-    public async Task<ResponseDto> Panel(ReportesBLL bll, CancellationToken ct)
-        => await ConsultarUno(() => bll.ObtenerPanel(ct),
+    /// <summary>
+    /// El administrador ve el local; un vendedor, solo sus boletas; quien no
+    /// vende (bodega), ni ventas ni caja. Lo decide el token, nunca el cliente.
+    /// </summary>
+    public async Task<ResponseDto> Panel(ReportesBLL bll, HttpContext http, CancellationToken ct)
+    {
+        var u = http.User;
+        var (soloDe, alcance) =
+            u.IsInRole("admin")    ? ((int?)null, "local")
+          : u.IsInRole("vendedor") ? (UsuarioActual(http), "personal")
+          :                          (UsuarioActual(http), "ninguno");
+
+        return await ConsultarUno(() => bll.ObtenerPanel(soloDe, alcance, ct),
             "Panel", "No se pudo armar el panel.");
+    }
 
     public async Task<ResponseDto> Resultado(
         [FromQuery] DateOnly? desde, [FromQuery] DateOnly? hasta,

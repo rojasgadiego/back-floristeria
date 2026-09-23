@@ -50,6 +50,13 @@ public class ClientesDAL
             "SELECT * FROM sp_cli_c_compras(@clienteId, @pagina, @tamano)",
             new { clienteId, pagina, tamano }, ct);
 
+    /// <summary>Las compras del cliente que atendió un vendedor en particular.</summary>
+    public async Task<IEnumerable<CompraCliente>> ComprasDe(
+        int clienteId, int usuarioId, int pagina, int tamano, CancellationToken ct = default)
+        => await _db.ConsultarLista<CompraCliente>(
+            "SELECT * FROM sp_cli_c_compras_usuario(@clienteId, @usuarioId, @pagina, @tamano)",
+            new { clienteId, usuarioId, pagina, tamano }, ct);
+
     public async Task<IEnumerable<MovimientoPuntos>> Puntos(
         int clienteId, int pagina, int tamano, CancellationToken ct = default)
         => await _db.ConsultarLista<MovimientoPuntos>(

@@ -138,12 +138,11 @@ public class GuardarCompraRequest
     /// <summary>
     /// Porcentaje, no fracción: 19 y no 0.19.
     ///
-    /// ⚠️ NO se guarda en la tabla —solo el iva ya calculado—, así que al
-    /// reabrir el borrador el formulario vuelve a mostrar 19% aunque se
-    /// haya guardado con otra tasa. Si aparecen compras exentas, hay que
-    /// agregar la columna.
+    /// Por defecto 0: las compras se anotan con el valor final pagado, IVA
+    /// incluido, así que no se suma nada encima. Se conserva el campo para
+    /// no tocar la firma de sp_abs_i_compra / sp_abs_u_compra.
     /// </summary>
-    public decimal IvaTasa { get; set; } = 19;
+    public decimal IvaTasa { get; set; } = 0;
 
     public List<CompraLineaRequest> Items { get; set; } = [];
 }

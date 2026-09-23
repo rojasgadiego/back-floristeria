@@ -36,14 +36,19 @@ public class ClientesBLL
     /// más se lleva. Cuatro consultas: son listas distintas, y unirlas en un
     /// SELECT multiplicaría las filas de cada una por las de las otras.
     /// </summary>
-    public async Task<ClienteDetalle?> Obtener(int id, CancellationToken ct = default)
+    /// <param name="soloDe">Null = administrador, ve todas las compras. Con
+    /// un id, solo las que vendió esa persona.</param>
+    public async Task<ClienteDetalle?> Obtener(
+        int id, int? soloDe = null, CancellationToken ct = default)
     {
         if (id <= 0) return null;
 
         var c = await _dal.ConsultarUno(id, ct);
         if (c is null) return null;
 
-        c.Compras7 = (await _dal.Compras(id, 1, 7, ct)).ToList();
+        c.Compras7 = soloDe is null
+            ? (await _dal.Compras(id, 1, 7, ct)).ToList()
+            : (await _dal.ComprasDe(id, soloDe.Value, 1, 7, ct)).ToList();
         c.Puntos7 = (await _dal.Puntos(id, 1, 7, ct)).ToList();
         c.Frecuentes = (await _dal.Frecuentes(id, 5, ct)).ToList();
 
@@ -60,9 +65,11 @@ public class ClientesBLL
         => string.IsNullOrWhiteSpace(rut) ? null : await _dal.ConsultarPorRut(rut.Trim(), ct);
 
     public async Task<ResultadoPagina<CompraCliente>> Compras(
-        int clienteId, PaginaFiltro p, CancellationToken ct = default)
+        int clienteId, PaginaFiltro p, int? soloDe = null, CancellationToken ct = default)
     {
-        var filas = (await _dal.Compras(clienteId, p.PaginaReal, p.TamanoReal, ct)).ToList();
+        var filas = soloDe is null
+            ? (await _dal.Compras(clienteId, p.PaginaReal, p.TamanoReal, ct)).ToList()
+            : (await _dal.ComprasDe(clienteId, soloDe.Value, p.PaginaReal, p.TamanoReal, ct)).ToList();
 
         return new ResultadoPagina<CompraCliente>
         {

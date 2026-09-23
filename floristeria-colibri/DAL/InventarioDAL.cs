@@ -259,8 +259,10 @@ public class InventarioDAL
     }
 
     /// <summary>sp_inv_c_movimientos: el libro mayor.</summary>
+    /// <param name="usuarioId">Null = todos (administrador); con un id, solo
+    /// los movimientos de esa persona.</param>
     public async Task<IEnumerable<Movimiento>> ConsultarMovimientos(
-        MovimientoFiltro f, CancellationToken ct = default)
+        MovimientoFiltro f, int? usuarioId = null, CancellationToken ct = default)
     {
         var p = new DynamicParameters();
         p.Add("ProductoId", f.ProductoId);
@@ -269,13 +271,13 @@ public class InventarioDAL
         p.Add("Hasta", f.Hasta);
         p.Add("Pagina", f.PaginaReal);
         p.Add("Tamano", f.TamanoReal);
-
+        p.Add("UsuarioId", usuarioId);
 
         return await _db.ConsultarLista<Movimiento>(
             """
         SELECT * FROM sp_inv_c_movimientos(
             @ProductoId::int, @Tipo::tipo_movimiento,
-            @Desde::date, @Hasta::date, @Pagina::int, @Tamano::int)
+            @Desde::date, @Hasta::date, @Pagina::int, @Tamano::int, @UsuarioId::int)
         """,
             p, ct);
     }

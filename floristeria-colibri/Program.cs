@@ -88,6 +88,10 @@ builder.Services.AddScoped<ClientesBLL>();
 builder.Services.AddScoped<ReportesDAL>();
 builder.Services.AddScoped<ReportesBLL>();
 
+//Cotizaciones
+builder.Services.AddScoped<CotizacionesDAL>();
+builder.Services.AddScoped<CotizacionesBLL>();
+
 // IJwtTokenService se registra dentro de AgregarSeguridad().
 builder.Services.AgregarSeguridad(builder.Configuration);
 
@@ -225,4 +229,5 @@ new ConfiguracionEndpoints(Log<ConfiguracionEndpoints>()).MapEndpoints(app);
 new MermasEndpoints(Log<MermasEndpoints>()).MapEndpoints(app);
 new ClientesEndpoints(Log<ClientesEndpoints>()).MapEndpoints(app);
 new ReportesEndpoints(Log<ReportesEndpoints>()).MapEndpoints(app);
+new CotizacionesEndpoints(Log<CotizacionesEndpoints>()).MapEndpoints(app);
 app.Run();

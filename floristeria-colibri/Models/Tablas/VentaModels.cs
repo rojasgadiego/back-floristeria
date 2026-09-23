@@ -89,11 +89,21 @@ public class VentaDetalle
     public int? Recibido { get; set; }
     public int? Vuelto { get; set; }
 
-    public int? AutorizadoPor { get; set; }
-    public string? Autorizador { get; set; }
+    /// <summary>
+    /// El NOMBRE de quien autorizó el descuento, no su id: la columna es text
+    /// y queda congelado en la boleta. Como int, una boleta con descuento
+    /// autorizado reventaba al leerse.
+    /// </summary>
+    public string? AutorizadoPor { get; set; }
 
     public int PuntosGanados { get; set; }
     public int PuntosCanjeados { get; set; }
+
+    /// <summary>
+    /// En el cobro final de un evento: lo que ya se había abonado en otras
+    /// boletas y que esta descuenta del total.
+    /// </summary>
+    public int AbonoPrevio { get; set; }
 
     public bool Anulada { get; set; }
     public string? MotivoAnulacion { get; set; }

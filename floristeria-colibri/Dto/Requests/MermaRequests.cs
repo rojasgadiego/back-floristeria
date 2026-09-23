@@ -67,6 +67,20 @@ public class DescartarLoteRequest
     public AutorizacionRequest? Autorizacion { get; set; }
 }
 
+/// <summary>Crear o editar un motivo del catálogo. Solo administración.</summary>
+public class MotivoMermaRequest
+{
+    public string Nombre { get; set; } = string.Empty;
+    public string Categoria { get; set; } = "otro";
+    public bool RequiereDetalle { get; set; }
+    public DestinoMerma? DestinoSugerido { get; set; }
+
+    /// <summary>Solo al editar: false lo saca de la lista.</summary>
+    public bool Activo { get; set; } = true;
+
+    public int? Orden { get; set; }
+}
+
 public class RevertirMermaRequest
 {
     public string Motivo { get; set; } = string.Empty;
@@ -83,6 +97,13 @@ public class DesarmeRequest
     /// lo que dice la receta: cada vara tiene que tener un destino.
     /// </summary>
     public List<LineaDesarmeRequest> Lineas { get; set; } = [];
+
+    /// <summary>
+    /// Firma de una administradora cuando lo que sale supera el umbral. Es la
+    /// misma regla que una merma suelta: sin ella, desarmar era la forma de
+    /// mermar caro sin pedir permiso.
+    /// </summary>
+    public AutorizacionRequest? Autorizacion { get; set; }
 }
 
 public class LineaDesarmeRequest

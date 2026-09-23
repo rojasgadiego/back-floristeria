@@ -90,8 +90,13 @@ public class ClientesEndpoints : EndpointsBase
         [AsParameters] ClienteFiltro filtro, ClientesBLL bll, CancellationToken ct)
         => await Consultar(() => bll.Listar(filtro, ct), "clientes");
 
-    public async Task<ResponseDto> Obtener(int id, ClientesBLL bll, CancellationToken ct)
-        => await ConsultarUno(() => bll.Obtener(id, ct), "Cliente", $"No existe el cliente {id}.");
+    /// <summary>Null para el administrador; el id del token para un vendedor.</summary>
+    private static int? SoloDe(HttpContext http)
+        => http.User.IsInRole("admin") ? null : UsuarioActual(http);
+
+    /// <summary>Un vendedor ve solo las compras que él le vendió al cliente.</summary>
+    public async Task<ResponseDto> Obtener(int id, ClientesBLL bll, HttpContext http, CancellationToken ct)
+        => await ConsultarUno(() => bll.Obtener(id, SoloDe(http), ct), "Cliente", $"No existe el cliente {id}.");
 
     /// <summary>
     /// 200 con datos en null cuando no hay ficha. Un 404 haría que el
@@ -118,8 +123,8 @@ public class ClientesEndpoints : EndpointsBase
     }
 
     public async Task<ResponseDto> Compras(
-        int id, [AsParameters] PaginaFiltro pagina, ClientesBLL bll, CancellationToken ct)
-        => await Consultar(() => bll.Compras(id, pagina, ct), "compras del cliente");
+        int id, [AsParameters] PaginaFiltro pagina, ClientesBLL bll, HttpContext http, CancellationToken ct)
+        => await Consultar(() => bll.Compras(id, pagina, SoloDe(http), ct), "compras del cliente");
 
     public async Task<ResponseDto> Puntos(
         int id, [AsParameters] PaginaFiltro pagina, ClientesBLL bll, CancellationToken ct)

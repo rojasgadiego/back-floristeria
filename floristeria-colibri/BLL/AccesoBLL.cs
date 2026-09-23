@@ -296,7 +296,8 @@ public class AccesoBLL
 
         // Vendedor atiende el mesón: vende, cotiza y consulta clientes. Ve el
         // inventario para saber qué hay, pero no lo modifica —eso lo frena la
-        // política Inventario del endpoint, no este permiso—.
+        // política Inventario del endpoint, no este permiso—. Registra las
+        // mermas del mostrador, que es la flor que tiene a la vista.
         RolUsuario.vendedor =>
         [
             "dashboard",
@@ -306,6 +307,7 @@ public class AccesoBLL
             "clientes",
             "inventario",
             "lotes",
+            "mermas",
             "promociones"
         ],
 

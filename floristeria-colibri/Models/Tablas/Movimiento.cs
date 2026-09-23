@@ -11,6 +11,12 @@ public class Movimiento
     public string Producto { get; set; } = string.Empty;
     public string? Emoji { get; set; }
     public int? LoteId { get; set; }
+
+    /// <summary>LOT-000001: lo que está impreso en el balde.</summary>
+    public string? LoteCodigo { get; set; }
+
+    /// <summary>"bodega" o "venta" (el mesón).</summary>
+    public string Ubicacion { get; set; } = "bodega";
     public TipoMovimiento Tipo { get; set; }
 
     /// <summary>Negativa en las salidas: el signo dice la dirección.</summary>

@@ -41,6 +41,30 @@ public class CajaDAL
                 Pagina = f.PaginaReal, Tamano = f.TamanoReal
             }, ct);
 
+    /// <summary>
+    /// La caja vista por un vendedor: sus propios totales y el arqueo en
+    /// null (sp_ven_c_caja_usuario). id null = la caja abierta.
+    /// </summary>
+    public async Task<Caja?> ConsultarCajaDe(
+        int? id, int usuarioId, CancellationToken ct = default)
+        => await _db.ConsultarUno<Caja>(
+            "SELECT * FROM sp_ven_c_caja_usuario(@id::int, @usuarioId::int)",
+            new { id, usuarioId }, ct);
+
+    /// <summary>Los turnos en los que el vendedor vendió, con sus totales.</summary>
+    public async Task<IEnumerable<Caja>> ConsultarHistorialDe(
+        CajaFiltro f, int usuarioId, CancellationToken ct = default)
+        => await _db.ConsultarLista<Caja>(
+            """
+            SELECT * FROM sp_ven_c_cajas_usuario(
+                @Desde::date, @Hasta::date, @UsuarioId::int, @Pagina::int, @Tamano::int)
+            """,
+            new
+            {
+                f.Desde, f.Hasta, UsuarioId = usuarioId,
+                Pagina = f.PaginaReal, Tamano = f.TamanoReal
+            }, ct);
+
     public async Task<(int Id, string Error)> Abrir(
         int fondoInicial, int usuarioId, CancellationToken ct = default)
     {

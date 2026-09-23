@@ -87,6 +87,15 @@ public class Merma
     public string? RevertidaPor { get; set; }
     public DateTime? RevertidaEn { get; set; }
 
+    /// <summary>Por qué se revirtió. Antes se pegaba al final del detalle.</summary>
+    public string? MotivoReversion { get; set; }
+
+    /// <summary>
+    /// Las mermas de un mismo desarme comparten grupo: una por componente.
+    /// Revertir cualquiera revierte el desarme entero.
+    /// </summary>
+    public int? DesarmeGrupo { get; set; }
+
     public DateTime CreadoEn { get; set; }
 
     [JsonIgnore]
@@ -127,14 +136,15 @@ public class ResumenMermas
     /// <summary>El proveedor lo abona. NO es costo.</summary>
     public long CostoDevuelto { get; set; }
 
-    public long VentasPeriodo { get; set; }
+    public long? VentasPeriodo { get; set; }
 
     /// <summary>Sobre 5% en una florería es señal de que se compra de más.</summary>
-    public decimal PorcentajeSobreVentas { get; set; }
+    public decimal? PorcentajeSobreVentas { get; set; }
 
     public IReadOnlyList<MermaPorDestino> PorDestino { get; set; } = Array.Empty<MermaPorDestino>();
     public IReadOnlyList<MermaPorProducto> PorProducto { get; set; } = Array.Empty<MermaPorProducto>();
     public IReadOnlyList<MermaPorMotivo> PorMotivo { get; set; } = Array.Empty<MermaPorMotivo>();
+    public IReadOnlyList<MermaPorCategoria> PorCategoria { get; set; } = Array.Empty<MermaPorCategoria>();
 }
 
 public class MermaPorDestino
@@ -168,10 +178,39 @@ public class MermaPorMotivo
     public long CostoPerdido { get; set; }
 }
 
+/// <summary>
+/// Un motivo del catálogo. La administradora los crea, renombra y apaga;
+/// apagarlo lo saca de la lista sin tocar las mermas que ya lo usan.
+/// </summary>
 public class MotivoMerma
 {
+    public int Id { get; set; }
     public string Motivo { get; set; } = string.Empty;
+
+    /// <summary>
+    /// natural, accidente, operacional, proveedor, comercial, faltante u otro.
+    /// Es lo que separa "se marchitó por mal cuidado" de "no se alcanzó a
+    /// vender": problemas distintos con soluciones distintas.
+    /// </summary>
+    public string Categoria { get; set; } = "otro";
+
+    /// <summary>"Otro", "Robo" o "Siniestro" no se entienden sin contexto.</summary>
+    public bool RequiereDetalle { get; set; }
+
+    /// <summary>El destino que el formulario propone al elegirlo.</summary>
+    public DestinoMerma? DestinoSugerido { get; set; }
+
+    public bool Activo { get; set; } = true;
+    public int Orden { get; set; }
     public long Usos { get; set; }
+}
+
+public class MermaPorCategoria
+{
+    public string Categoria { get; set; } = string.Empty;
+    public long Registros { get; set; }
+    public long Unidades { get; set; }
+    public long CostoPerdido { get; set; }
 }
 
 /// <summary>Una línea del plan de desarme, pre-llenada desde la receta.</summary>

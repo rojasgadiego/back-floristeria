@@ -58,6 +58,26 @@ public class MostradorEndpoints : EndpointsBase
             .WithSummary("Devuelve al lote del que salió. Bajar de más pasa.")
             .RequireAuthorization(Politicas.Inventario)
             .Produces<ResponseDto>(200).Produces(400);
+
+        // ═══ El PNG: fuera del grupo, sin el filtro del sobre ═══
+        // Igual que /api/lotes/{codigo}/qr: la etiqueta de la partida es la
+        // que se escanea en el mesón para vender.
+        app.MapGet("/api/mostrador/partidas/{codigo}/qr", QrPng)
+            .WithTags("Mostrador")
+            .WithName("QrPartida")
+            .WithSummary("El QR de una partida como PNG")
+            .RequireAuthorization(Politicas.VerInventario)
+            .Produces(200, contentType: "image/png").Produces(404);
+    }
+
+    public async Task<IResult> QrPng(
+        string codigo, [FromQuery] int? px, MostradorBLL bll, CancellationToken ct)
+    {
+        var contenido = await bll.QrDePartida(codigo, ct);
+        if (string.IsNullOrWhiteSpace(contenido)) return Results.NotFound();
+
+        var png = QRCodeHelper.GenerarPng(contenido, px ?? QRCodeHelper.PixelesPorModulo);
+        return Results.File(png, "image/png", fileDownloadName: $"{QRCodeHelper.ExtraerCodigo(codigo)}.png");
     }
 
     public async Task<ResponseDto> Listar(

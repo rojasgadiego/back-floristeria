@@ -28,6 +28,14 @@ public class ReportesDAL
     public async Task<PanelCrudo?> Panel(CancellationToken ct = default)
         => await _db.ConsultarUno<PanelCrudo>("SELECT * FROM sp_rep_c_panel()", null, ct);
 
+    /// <summary>
+    /// El mismo panel con solo las boletas de un usuario, y en null lo que es
+    /// del local: costo, utilidad, inventario, clientes, puntos, cajón.
+    /// </summary>
+    public async Task<PanelCrudo?> PanelDe(int usuarioId, CancellationToken ct = default)
+        => await _db.ConsultarUno<PanelCrudo>(
+            "SELECT * FROM sp_rep_c_panel_usuario(@usuarioId::int)", new { usuarioId }, ct);
+
     public async Task<IEnumerable<Alerta>> Alertas(CancellationToken ct = default)
         => await _db.ConsultarLista<Alerta>("SELECT * FROM sp_rep_c_alertas()", null, ct);
 
@@ -106,12 +114,12 @@ public class PanelCrudo
     public long HoyVendido { get; set; }
     public long HoyTicketPromedio { get; set; }
     public long HoyUnidades { get; set; }
-    public long HoyCosto { get; set; }
-    public long HoyUtilidad { get; set; }
-    public decimal HoyMargen { get; set; }
+    public long? HoyCosto { get; set; }
+    public long? HoyUtilidad { get; set; }
+    public decimal? HoyMargen { get; set; }
     public long HoyAnuladas { get; set; }
     public long HoyDescuentos { get; set; }
-    public long HoyClientesNuevos { get; set; }
+    public long? HoyClientesNuevos { get; set; }
 
     public long SemBoletas { get; set; }
     public long SemVendido { get; set; }
@@ -127,7 +135,7 @@ public class PanelCrudo
 
     public long MesVendido { get; set; }
     public long MesBoletas { get; set; }
-    public decimal InventarioValorizado { get; set; }
-    public long ClientesActivos { get; set; }
-    public long PuntosPorPagar { get; set; }
+    public decimal? InventarioValorizado { get; set; }
+    public long? ClientesActivos { get; set; }
+    public long? PuntosPorPagar { get; set; }
 }

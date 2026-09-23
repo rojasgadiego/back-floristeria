@@ -30,7 +30,11 @@ public class VentasBLL
     {
         if (usuarioId <= 0) return ResultadoOp<VentaDetalle>.Error("Sesión inválida.");
 
-        if (r.Items is null or { Count: 0 })
+        r.Items ??= [];
+
+        // El cobro de un evento puede no llevar flor: si todo era un arco o
+        // un montaje, los servicios los agrega la base desde la cotización.
+        if (r.Items.Count == 0 && r.CotizacionId is null)
             return ResultadoOp<VentaDetalle>.Error("El carrito está vacío.");
 
         if (r.Items.Any(i => i.Cantidad < 1))

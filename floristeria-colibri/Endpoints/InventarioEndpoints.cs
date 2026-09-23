@@ -164,9 +164,17 @@ public class InventarioEndpoints : EndpointsBase
 
     #region Mostrador
 
+    /// <summary>
+    /// El administrador ve el libro completo; cualquier otro, solo sus
+    /// movimientos. Lo decide el token: antes el recorte lo hacía el front y
+    /// la API entregaba los de todos.
+    /// </summary>
     public async Task<ResponseDto> Movimientos(
-        [AsParameters] MovimientoFiltro filtro, InventarioBLL bll, CancellationToken ct)
-        => await Consultar(() => bll.ListarMovimientos(filtro, ct), "movimientos");
+        [AsParameters] MovimientoFiltro filtro, InventarioBLL bll, HttpContext http, CancellationToken ct)
+    {
+        int? soloDe = http.User.IsInRole("admin") ? null : UsuarioActual(http);
+        return await Consultar(() => bll.ListarMovimientos(filtro, soloDe, ct), "movimientos");
+    }
 
     #endregion
     #endregion

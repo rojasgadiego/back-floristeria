@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("floristeria-colibri")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+21dd330f44bdc8f48a62da4c408580077324bfb3")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f56817071ee960abb3c1c9032012f4b57bb82e37")]
 [assembly: System.Reflection.AssemblyProductAttribute("floristeria-colibri")]
 [assembly: System.Reflection.AssemblyTitleAttribute("floristeria-colibri")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

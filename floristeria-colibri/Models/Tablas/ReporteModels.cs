@@ -8,6 +8,13 @@ namespace Colibri.Api.Models.Tablas;
 /// </summary>
 public class Panel
 {
+    /// <summary>
+    /// De quién son los números: "local" (administrador, todo el local),
+    /// "personal" (un vendedor, solo sus boletas) o "ninguno" (roles que no
+    /// venden: sin ventas ni caja). El front rotula y oculta según esto.
+    /// </summary>
+    public string Alcance { get; set; } = "local";
+
     public PanelHoy Hoy { get; set; } = new();
 
     /// <summary>
@@ -40,14 +47,15 @@ public class PanelHoy
     /// Sale de los consumos: lo que valían las varas que efectivamente
     /// salieron de la cámara, no el costo de ficha del producto.
     /// </summary>
-    public long Costo { get; set; }
+    // Null fuera del administrador: son números del local, no de una persona.
+    public long? Costo { get; set; }
 
-    public long Utilidad { get; set; }
-    public decimal Margen { get; set; }
+    public long? Utilidad { get; set; }
+    public decimal? Margen { get; set; }
 
     public long Anuladas { get; set; }
     public long Descuentos { get; set; }
-    public long ClientesNuevos { get; set; }
+    public long? ClientesNuevos { get; set; }
 }
 
 public class PanelComparativo
@@ -65,7 +73,8 @@ public class PanelCaja
     public int Efectivo { get; set; }
 
     /// <summary>Fondo más lo que entró en efectivo. Es lo que debería haber.</summary>
-    public int EnCajon { get; set; }
+    /// <summary>Null para un vendedor: suma lo de todos (arqueo ciego).</summary>
+    public int? EnCajon { get; set; }
 
     public long Boletas { get; set; }
 }
@@ -77,12 +86,12 @@ public class PanelContexto
     public long MesBoletas { get; set; }
 
     /// <summary>Al costo, no al precio: es lo invertido.</summary>
-    public decimal InventarioValorizado { get; set; }
+    public decimal? InventarioValorizado { get; set; }
 
-    public long ClientesActivos { get; set; }
+    public long? ClientesActivos { get; set; }
 
     /// <summary>Lo que el local debe si todos canjearan mañana.</summary>
-    public long PuntosPorPagar { get; set; }
+    public long? PuntosPorPagar { get; set; }
 }
 
 /// <summary>

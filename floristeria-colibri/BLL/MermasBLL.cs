@@ -28,11 +28,12 @@ public class MermasBLL
     // Consultas
     // ============================================================
 
+    /// <summary>`soloDe`: null para el administrador; si no, solo lo propio.</summary>
     public async Task<ResultadoPagina<Merma>> Listar(
-        MermaFiltro filtro, CancellationToken ct = default)
+        MermaFiltro filtro, int? soloDe, CancellationToken ct = default)
     {
         filtro.Normalizar();
-        var filas = (await _dal.Consultar(filtro, ct)).ToList();
+        var filas = (await _dal.Consultar(filtro, soloDe, ct)).ToList();
 
         return new ResultadoPagina<Merma>
         {
@@ -43,11 +44,56 @@ public class MermasBLL
         };
     }
 
-    public async Task<Merma?> Obtener(int id, CancellationToken ct = default)
-        => id <= 0 ? null : await _dal.ConsultarUna(id, ct);
+    public async Task<Merma?> Obtener(int id, int? soloDe, CancellationToken ct = default)
+        => id <= 0 ? null : await _dal.ConsultarUna(id, soloDe, ct);
 
-    public async Task<IEnumerable<MotivoMerma>> Motivos(CancellationToken ct = default)
-        => await _dal.ConsultarMotivos(ct);
+    public async Task<IEnumerable<MotivoMerma>> Motivos(bool todos, CancellationToken ct = default)
+        => await _dal.ConsultarMotivos(todos, ct);
+
+    private static readonly string[] Categorias =
+        ["natural", "accidente", "operacional", "proveedor", "comercial", "faltante", "otro"];
+
+    private static string? ValidarMotivo(MotivoMermaRequest r)
+    {
+        if (string.IsNullOrWhiteSpace(r.Nombre)) return "Indica el nombre del motivo.";
+        if (r.Nombre.Trim().Length > 60) return "El nombre del motivo es muy largo (máximo 60).";
+        if (!Categorias.Contains(r.Categoria)) return $"Categoría desconocida: {r.Categoria}.";
+        return null;
+    }
+
+    public async Task<ResultadoOp<MotivoMerma>> CrearMotivo(
+        MotivoMermaRequest r, CancellationToken ct = default)
+    {
+        var invalido = ValidarMotivo(r);
+        if (invalido is not null) return ResultadoOp<MotivoMerma>.Error(invalido);
+
+        var (id, error) = await _dal.CrearMotivo(r, ct);
+        if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<MotivoMerma>.Error(error);
+
+        return await MotivoLeido(id, ct);
+    }
+
+    public async Task<ResultadoOp<MotivoMerma>> ActualizarMotivo(
+        int id, MotivoMermaRequest r, CancellationToken ct = default)
+    {
+        if (id <= 0) return ResultadoOp<MotivoMerma>.Error("Indica el motivo.");
+
+        var invalido = ValidarMotivo(r);
+        if (invalido is not null) return ResultadoOp<MotivoMerma>.Error(invalido);
+
+        var error = await _dal.ActualizarMotivo(id, r, ct);
+        if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<MotivoMerma>.Error(error);
+
+        return await MotivoLeido(id, ct);
+    }
+
+    private async Task<ResultadoOp<MotivoMerma>> MotivoLeido(int id, CancellationToken ct)
+    {
+        var m = (await _dal.ConsultarMotivos(true, ct)).FirstOrDefault(x => x.Id == id);
+        return m is null
+            ? ResultadoOp<MotivoMerma>.Error("El motivo se guardó pero no se pudo leer.")
+            : ResultadoOp<MotivoMerma>.Exito(m);
+    }
 
     /// <summary>
     /// El resumen con sus tres desgloses. Cuatro consultas en vez de una: son
@@ -55,14 +101,15 @@ public class MermasBLL
     /// filas de cada una por las de las otras.
     /// </summary>
     public async Task<ResumenMermas?> Resumen(
-        DateOnly? desde, DateOnly? hasta, CancellationToken ct = default)
+        DateOnly? desde, DateOnly? hasta, int? soloDe, CancellationToken ct = default)
     {
-        var r = await _dal.ConsultarResumen(desde, hasta, ct);
+        var r = await _dal.ConsultarResumen(desde, hasta, soloDe, ct);
         if (r is null) return null;
 
-        r.PorDestino = (await _dal.PorDestino(desde, hasta, ct)).ToList();
-        r.PorProducto = (await _dal.PorProducto(desde, hasta, ct)).ToList();
-        r.PorMotivo = (await _dal.PorMotivo(desde, hasta, ct)).ToList();
+        r.PorDestino = (await _dal.PorDestino(desde, hasta, soloDe, ct)).ToList();
+        r.PorProducto = (await _dal.PorProducto(desde, hasta, soloDe, ct)).ToList();
+        r.PorMotivo = (await _dal.PorMotivo(desde, hasta, soloDe, ct)).ToList();
+        r.PorCategoria = (await _dal.PorCategoria(desde, hasta, soloDe, ct)).ToList();
 
         return r;
     }
@@ -71,12 +118,31 @@ public class MermasBLL
     // Escaneo
     // ============================================================
 
-    public async Task<OrigenMerma?> Escanear(string codigo, CancellationToken ct = default)
+    /// <summary>
+    /// Desde el mesón solo se merma lo del mostrador. Un vendedor que escanea
+    /// un balde de bodega lo ve (existe) pero bloqueado, con el porqué.
+    /// </summary>
+    public const string SoloMostrador =
+        "Desde el mesón solo se registran mermas del mostrador (partidas PAR-…). " +
+        "Los baldes de bodega los registra bodega.";
+
+    public async Task<OrigenMerma?> Escanear(
+        string codigo, bool soloMostrador = false, CancellationToken ct = default)
     {
         // Se limpia acá para no mandar a la base cualquier cosa que el lector
         // haya decidido enviar: algunos agregan un salto de línea al final.
         var limpio = QRCodeHelper.ExtraerCodigo(codigo);
-        return string.IsNullOrWhiteSpace(limpio) ? null : await _dal.Escanear(limpio, ct);
+        if (string.IsNullOrWhiteSpace(limpio)) return null;
+
+        var o = await _dal.Escanear(limpio, ct);
+
+        if (o is not null && soloMostrador && o.PartidaId is null && o.PuedeMermar)
+        {
+            o.PuedeMermar = false;
+            o.MotivoBloqueo = SoloMostrador;
+        }
+
+        return o;
     }
 
     public async Task<int> Umbral(CancellationToken ct = default)
@@ -115,10 +181,16 @@ public class MermasBLL
     /// solo exige que la merma cara venga firmada; quién puede firmar lo
     /// decide VerificarAutorizacion, y hoy solo un admin.
     /// </summary>
+    /// <param name="soloMostrador">
+    /// true para el vendedor: puede registrar, pero solo mermas de una partida
+    /// del mostrador, que es lo que tiene a la vista en el mesón.
+    /// </param>
     public async Task<ResultadoOp<Merma>> Registrar(
-        RegistrarMermaRequest r, int usuarioId, CancellationToken ct = default)
+        RegistrarMermaRequest r, int usuarioId, bool soloMostrador = false,
+        CancellationToken ct = default)
     {
         if (usuarioId <= 0) return ResultadoOp<Merma>.Error("Sesión inválida.");
+        if (soloMostrador && r.PartidaId is null) return ResultadoOp<Merma>.Error(SoloMostrador);
         if (r.ProductoId <= 0) return ResultadoOp<Merma>.Error("Indica el producto.");
         if (r.Cantidad < 1) return ResultadoOp<Merma>.Error("La cantidad debe ser al menos 1.");
 
@@ -148,7 +220,7 @@ public class MermasBLL
         var (id, error) = await _dal.Registrar(r, autorizadoPor, usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
 
-        var merma = await _dal.ConsultarUna(id, ct);
+        var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
             ? ResultadoOp<Merma>.Error("La merma se registró pero no se pudo leer.")
             : ResultadoOp<Merma>.Exito(merma);
@@ -168,7 +240,7 @@ public class MermasBLL
         var (id, error) = await _dal.DescartarLote(loteId, r, autorizadoPor, usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
 
-        var merma = await _dal.ConsultarUna(id, ct);
+        var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
             ? ResultadoOp<Merma>.Error("El lote se descartó pero no se pudo leer la merma.")
             : ResultadoOp<Merma>.Exito(merma);
@@ -191,7 +263,7 @@ public class MermasBLL
         var error = await _dal.Revertir(id, motivo.Trim(), usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
 
-        var merma = await _dal.ConsultarUna(id, ct);
+        var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
             ? ResultadoOp<Merma>.Error("La merma no existe.")
             : ResultadoOp<Merma>.Exito(merma);
@@ -251,9 +323,12 @@ public class MermasBLL
         if (r.Lineas.Any(l => l.Recuperadas < 0 || l.Perdidas < 0))
             return ResultadoOp<ResultadoDesarme>.Error("Las cantidades no pueden ser negativas.");
 
+        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, ct);
+        if (errorAuth is not null) return ResultadoOp<ResultadoDesarme>.Error(errorAuth);
+
         // Que la suma cuadre con la receta lo valida el SP: es él quien sabe
         // cuántas varas lleva cada unidad, y su mensaje nombra el componente
-        // que no calza.
-        return await _dal.Desarmar(productoId, r, usuarioId, ct);
+        // que no calza. También exige la firma si el desarme supera el umbral.
+        return await _dal.Desarmar(productoId, r, autorizadoPor, usuarioId, ct);
     }
 }

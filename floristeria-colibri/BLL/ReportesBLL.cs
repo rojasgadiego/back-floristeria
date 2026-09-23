@@ -18,13 +18,22 @@ public class ReportesBLL
     /// porque es una sola pantalla, y tres viajes desde el front harían que
     /// se pinte por partes.
     /// </summary>
-    public async Task<Panel?> ObtenerPanel(CancellationToken ct = default)
+    /// <param name="soloDe">Null = todo el local (administrador). Con un id,
+    /// solo las boletas de esa persona.</param>
+    /// <param name="alcance">"local", "personal" o "ninguno"; con "ninguno"
+    /// no se entrega la caja.</param>
+    public async Task<Panel?> ObtenerPanel(
+        int? soloDe = null, string alcance = "local", CancellationToken ct = default)
     {
-        var c = await _dal.Panel(ct);
+        var c = soloDe is null
+            ? await _dal.Panel(ct)
+            : await _dal.PanelDe(soloDe.Value, ct);
         if (c is null) return null;
 
         return new Panel
         {
+            Alcance = alcance,
+
             Hoy = new PanelHoy
             {
                 Boletas = c.HoyBoletas,
@@ -49,14 +58,14 @@ public class ReportesBLL
 
             /* Null cuando no hay turno: el front muestra "abre la caja" en vez
                de ceros, que parecerían un día sin ventas. */
-            Caja = c.CajaId is null ? null : new PanelCaja
+            Caja = c.CajaId is null || alcance == "ninguno" ? null : new PanelCaja
             {
                 Id = c.CajaId.Value,
                 AbiertaPor = c.CajaAbiertaPor,
                 AbiertaEn = c.CajaAbiertaEn ?? default,
                 Fondo = c.CajaFondo ?? 0,
                 Efectivo = c.CajaEfectivo ?? 0,
-                EnCajon = c.CajaEnCajon ?? 0,
+                EnCajon = c.CajaEnCajon,
                 Boletas = c.CajaBoletas
             },
 

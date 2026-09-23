@@ -45,10 +45,14 @@ public class Caja
     public int PuntosOtorgados { get; set; }
     public int PuntosCanjeados { get; set; }
 
-    /// <summary>Lo que debería haber físicamente: fondo + efectivo recibido.</summary>
-    public int EnCajon { get; set; }
+    /// <summary>
+    /// Lo que debería haber físicamente: fondo + efectivo recibido.
+    /// Null para un vendedor: suma lo que cobraron todos (arqueo ciego).
+    /// </summary>
+    public int? EnCajon { get; set; }
 
-    public int EfectivoEsperado { get; set; }
+    /// <summary>Null para un vendedor, por la misma razón que EnCajon.</summary>
+    public int? EfectivoEsperado { get; set; }
     public int? EfectivoContado { get; set; }
 
     /// <summary>Contado menos esperado. Negativo es faltante, positivo sobrante.</summary>
