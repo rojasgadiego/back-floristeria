@@ -1,4 +1,5 @@
 using Colibri.Api.Auth;
+using Colibri.Api.Correo;
 using Colibri.Api.DAL;
 using Colibri.Api.Dto;
 using Colibri.Api.Dto.Requests;
@@ -15,12 +16,14 @@ public class MermasBLL
     /// <summary>Para verificar la firma de quien autoriza. BCrypt vive en C#.</summary>
     private readonly AccesoDAL _acceso;
 
+    private readonly AvisosCorreo _avisos;
     private readonly ILogger<MermasBLL> _log;
 
-    public MermasBLL(MermasDAL dal, AccesoDAL acceso, ILogger<MermasBLL> log)
+    public MermasBLL(MermasDAL dal, AccesoDAL acceso, AvisosCorreo avisos, ILogger<MermasBLL> log)
     {
         _dal = dal;
         _acceso = acceso;
+        _avisos = avisos;
         _log = log;
     }
 
@@ -220,6 +223,9 @@ public class MermasBLL
         var (id, error) = await _dal.Registrar(r, autorizadoPor, usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
 
+        // Con firma = sobre el umbral: eso es lo que se avisa.
+        if (autorizadoPor is not null) _avisos.MermaRegistrada(id);
+
         var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
             ? ResultadoOp<Merma>.Error("La merma se registró pero no se pudo leer.")
@@ -239,6 +245,8 @@ public class MermasBLL
 
         var (id, error) = await _dal.DescartarLote(loteId, r, autorizadoPor, usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
+
+        if (autorizadoPor is not null) _avisos.MermaRegistrada(id);
 
         var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null

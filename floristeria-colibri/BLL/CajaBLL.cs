@@ -1,3 +1,4 @@
+using Colibri.Api.Correo;
 using Colibri.Api.DAL;
 using Colibri.Api.Dto;
 using Colibri.Api.Dto.Requests;
@@ -9,8 +10,13 @@ namespace Colibri.Api.BLL;
 public class CajaBLL
 {
     private readonly CajaDAL _dal;
+    private readonly AvisosCorreo _avisos;
 
-    public CajaBLL(CajaDAL dal) => _dal = dal;
+    public CajaBLL(CajaDAL dal, AvisosCorreo avisos)
+    {
+        _dal = dal;
+        _avisos = avisos;
+    }
 
     /// <summary>Null si no hay turno abierto. El front lo usa para decidir si se puede vender.</summary>
     // `soloDe`: null = administrador, ve el turno completo. Con un id, lo
@@ -86,6 +92,10 @@ public class CajaBLL
 
         var (id, error) = await _dal.Cerrar(r.EfectivoContado, usuarioId, r.Nota, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Caja>.Error(error);
+
+        // El resumen a la administración siempre va completo, aunque quien
+        // cerró sea un vendedor con arqueo ciego.
+        _avisos.CajaCerrada(id);
 
         var caja = ciego
             ? await _dal.ConsultarCajaDe(id, usuarioId, ct)

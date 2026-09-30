@@ -1,3 +1,4 @@
+using Colibri.Api.Correo;
 using Colibri.Api.DAL;
 using Colibri.Api.Dto;
 using Colibri.Api.Dto.Requests;
@@ -20,8 +21,13 @@ namespace Colibri.Api.BLL;
 public partial class AbastecimientoBLL
 {
     private readonly AbastecimientoDAL _dal;
+    private readonly AvisosCorreo _avisos;
 
-    public AbastecimientoBLL(AbastecimientoDAL dal) => _dal = dal;
+    public AbastecimientoBLL(AbastecimientoDAL dal, AvisosCorreo avisos)
+    {
+        _dal = dal;
+        _avisos = avisos;
+    }
 
     // ============================================================
     // Proveedores
@@ -266,6 +272,10 @@ public partial class AbastecimientoBLL
 
         var resultado = await _dal.RecibirCompra(compraId, usuarioId, r.FechaIngreso, ct);
         if (!resultado.Ok) return resultado;
+
+        // El aviso sale al recibir y no al crear: un borrador todavía se
+        // puede corregir o anular, y lo recibido es la plata que ya salió.
+        _avisos.CompraRecibida(compraId);
 
         // Los lotes recién creados, para que la pantalla de resultado los
         // muestre sin una segunda vuelta al servidor. Es lo que se lee justo

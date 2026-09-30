@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Colibri.Api.Auth;
+using Colibri.Api.Correo;
 using Colibri.Api.DAL;
 using Colibri.Api.Dto;
 using Colibri.Api.Dto.Requests;
@@ -12,12 +13,14 @@ public class VentasBLL
 {
     private readonly VentasDAL _dal;
     private readonly AccesoDAL _acceso;
+    private readonly AvisosCorreo _avisos;
     private readonly ILogger<VentasBLL> _log;
 
-    public VentasBLL(VentasDAL dal, AccesoDAL acceso, ILogger<VentasBLL> log)
+    public VentasBLL(VentasDAL dal, AccesoDAL acceso, AvisosCorreo avisos, ILogger<VentasBLL> log)
     {
         _dal = dal;
         _acceso = acceso;
+        _avisos = avisos;
         _log = log;
     }
 
@@ -78,6 +81,9 @@ public class VentasBLL
         var (id, error) = await _dal.Registrar(r, usuarioId, autorizadoPor, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<VentaDetalle>.Error(error);
 
+        // Solo encola: el comprobante y la alerta se arman y envían después.
+        _avisos.VentaRegistrada(id);
+
         var boleta = await Obtener(id, ct);
         return boleta is null
             ? ResultadoOp<VentaDetalle>.Error("La venta se registró pero no se pudo leer.")
@@ -93,7 +99,9 @@ public class VentasBLL
             return ResultadoOp<ResultadoAnulacion>.Error(
                 "Explica por qué se anula, con al menos 4 caracteres.");
 
-        return await _dal.Anular(ventaId, motivo.Trim(), usuarioId, ct);
+        var resultado = await _dal.Anular(ventaId, motivo.Trim(), usuarioId, ct);
+        if (resultado.Ok) _avisos.VentaAnulada(ventaId);
+        return resultado;
     }
 
     // ============================================================

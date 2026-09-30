@@ -1,5 +1,6 @@
 using Colibri.Api.Auth;
 using Colibri.Api.BLL;
+using Colibri.Api.Correo;
 using Colibri.Api.DAL;
 using Colibri.Api.DbAccess;
 using Colibri.Api.Endpoints;
@@ -91,6 +92,19 @@ builder.Services.AddScoped<ReportesBLL>();
 //Cotizaciones
 builder.Services.AddScoped<CotizacionesDAL>();
 builder.Services.AddScoped<CotizacionesBLL>();
+
+// ─── Correo ──────────────────────────────────────────────────
+// Los BLL encolan y siguen; el worker arma y envía en segundo plano. Sin
+// Correo__ApiKey todo queda registrado pero no sale nada.
+builder.Services.Configure<CorreoOpciones>(builder.Configuration.GetSection("Correo"));
+builder.Services.AddHttpClient("resend", c =>
+{
+    c.BaseAddress = new Uri("https://api.resend.com/");
+    c.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddSingleton<ColaCorreo>();
+builder.Services.AddSingleton<AvisosCorreo>();
+builder.Services.AddHostedService<EnvioCorreoWorker>();
 
 // IJwtTokenService se registra dentro de AgregarSeguridad().
 builder.Services.AgregarSeguridad(builder.Configuration);
