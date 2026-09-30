@@ -93,6 +93,10 @@ builder.Services.AddScoped<ReportesBLL>();
 builder.Services.AddScoped<CotizacionesDAL>();
 builder.Services.AddScoped<CotizacionesBLL>();
 
+//Fotos de productos. La carpeta es Imagenes__Carpeta (un volumen en el VPS).
+builder.Services.AddScoped<ImagenesDAL>();
+builder.Services.AddScoped<ImagenesBLL>();
+
 // ─── Correo ──────────────────────────────────────────────────
 // Los BLL encolan y siguen; el worker arma y envía en segundo plano. Sin
 // Correo__ApiKey todo queda registrado pero no sale nada.
@@ -244,4 +248,5 @@ new MermasEndpoints(Log<MermasEndpoints>()).MapEndpoints(app);
 new ClientesEndpoints(Log<ClientesEndpoints>()).MapEndpoints(app);
 new ReportesEndpoints(Log<ReportesEndpoints>()).MapEndpoints(app);
 new CotizacionesEndpoints(Log<CotizacionesEndpoints>()).MapEndpoints(app);
+new ImagenesEndpoints(Log<ImagenesEndpoints>()).MapEndpoints(app);
 app.Run();

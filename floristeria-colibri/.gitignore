@@ -5,3 +5,4 @@ appsettings.Local.json
 appsettings.Production.json
 .vs/
 .vscode/
+datos/
