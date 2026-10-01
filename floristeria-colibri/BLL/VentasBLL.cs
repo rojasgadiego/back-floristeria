@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Colibri.Api.Auth;
 using Colibri.Api.Correo;
@@ -51,31 +52,24 @@ public class VentasBLL
 
         // ─── La autorización ───
         //
-        // Se verifica ACÁ y no en el SP porque BCrypt vive en C#. El SP solo
-        // exige que la boleta venga firmada por alguien; quién es ese alguien
-        // y si su clave es correcta se resuelve en este bloque.
+        // El vendedor solicita un código que se envía por correo al admin.
+        // Acá solo se verifica que el código sea válido para este monto y
+        // que no haya expirado. El SP exige que venga firmado.
         string? autorizadoPor = null;
 
-        if (r.Autorizacion is { } aut && !string.IsNullOrWhiteSpace(aut.Email))
+        if (r.Autorizacion is { } aut && !string.IsNullOrWhiteSpace(aut.Codigo))
         {
-            var quien = await _acceso.BuscarParaLogin(aut.Email.Trim(), ct);
+            var valido = await _dal.ValidarYUsarCodigoDescuento(
+                aut.Codigo.Trim().ToUpperInvariant(), r.DescuentoManual, ct);
 
-            if (quien is null || !PasswordHasher.Verificar(aut.Password, quien.PasswordHash))
+            if (!valido)
             {
-                _log.LogWarning("Autorización de descuento fallida para {Email}", aut.Email);
-                return ResultadoOp<VentaDetalle>.Error("La clave de autorización no es correcta.");
+                _log.LogWarning("Código de descuento inválido o expirado: {Codigo}", aut.Codigo);
+                return ResultadoOp<VentaDetalle>.Error(
+                    "El código es incorrecto, ya fue usado o expiró. Solicita uno nuevo.");
             }
 
-            if (!quien.Activo)
-                return ResultadoOp<VentaDetalle>.Error("Esa cuenta está desactivada.");
-
-            // Solo un admin autoriza. Si un vendedor pudiera firmar el
-            // descuento de otro vendedor, el umbral no serviría de nada.
-            if (quien.Rol != Models.Enums.RolUsuario.admin)
-                return ResultadoOp<VentaDetalle>.Error(
-                    $"{quien.Nombre} no puede autorizar descuentos. Pide a una administradora.");
-
-            autorizadoPor = quien.Nombre;
+            autorizadoPor = "Código autorizado";
         }
 
         var (id, error) = await _dal.Registrar(r, usuarioId, autorizadoPor, ct);
@@ -102,6 +96,24 @@ public class VentasBLL
         var resultado = await _dal.Anular(ventaId, motivo.Trim(), usuarioId, ct);
         if (resultado.Ok) _avisos.VentaAnulada(ventaId);
         return resultado;
+    }
+
+    /// <summary>
+    /// Genera un código de 6 dígitos, lo guarda con expiración de 10 minutos
+    /// y lo envía por correo a los administradores configurados en Correo__Avisos.
+    /// </summary>
+    public async Task<ResultadoOp<string>> SolicitarCodigoDescuento(
+        int descuento, int vendedorId, CancellationToken ct = default)
+    {
+        if (descuento <= 0)
+            return ResultadoOp<string>.Error("El descuento debe ser mayor que cero.");
+
+        var codigo = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+
+        await _dal.GuardarCodigoDescuento(codigo, descuento, vendedorId, ct);
+        _avisos.CodigoDescuentoSolicitado(codigo, descuento);
+
+        return ResultadoOp<string>.Exito("Código enviado al administrador por correo.");
     }
 
     // ============================================================

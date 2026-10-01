@@ -105,6 +105,9 @@ public class VentaDetalle
     /// </summary>
     public int AbonoPrevio { get; set; }
 
+    public bool EsDespacho { get; set; }
+    public string? DireccionDespacho { get; set; }
+
     public bool Anulada { get; set; }
     public string? MotivoAnulacion { get; set; }
     public int? AnuladaPor { get; set; }

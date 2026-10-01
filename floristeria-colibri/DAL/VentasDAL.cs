@@ -60,6 +60,8 @@ public class VentasDAL
             p.Add("Recibido", r.Recibido);
             p.Add("AutorizadoPor", autorizadoPor);
             p.Add("CotizacionId", r.CotizacionId);
+            p.Add("EsDespacho", r.EsDespacho);
+            p.Add("DirDespacho", r.DireccionDespacho);
 
             var id = await _db.Escalar<int>(
                 """
@@ -67,7 +69,7 @@ public class VentasDAL
                     @Items::jsonb, @MedioPago::medio_pago, @UsuarioId::int,
                     @ClienteId::int, @PromocionId::int, @DescuentoManual::int,
                     @PuntosCanjeados::int, @Recibido::int, @AutorizadoPor::text,
-                    @CotizacionId::int)
+                    @CotizacionId::int, @EsDespacho::boolean, @DirDespacho::text)
                 """,
                 p, ct);
 
@@ -162,4 +164,37 @@ public class VentasDAL
     public async Task<string?> ConsultarConfig(string clave, CancellationToken ct = default)
         => await _db.Escalar<string>(
             "SELECT valor::text FROM configuracion WHERE clave = @clave", new { clave }, ct);
+
+    // ============================================================
+    // Códigos de autorización de descuento
+    // ============================================================
+
+    public async Task GuardarCodigoDescuento(
+        string codigo, int descuento, int vendedorId, CancellationToken ct = default)
+        => await _db.Ejecutar(
+            """
+            INSERT INTO codigos_autorizacion_descuento (codigo, descuento, vendedor_id)
+            VALUES (@codigo, @descuento, @vendedorId)
+            """,
+            new { codigo, descuento, vendedorId }, ct);
+
+    /// <summary>
+    /// Marca el código como usado si es válido (no expirado, monto coincide).
+    /// Devuelve true si fue válido y se consumió.
+    /// </summary>
+    public async Task<bool> ValidarYUsarCodigoDescuento(
+        string codigo, int descuento, CancellationToken ct = default)
+    {
+        var filas = await _db.Ejecutar(
+            """
+            UPDATE codigos_autorizacion_descuento
+               SET usado = TRUE
+             WHERE codigo    = @codigo
+               AND descuento = @descuento
+               AND NOT usado
+               AND expira_en > now()
+            """,
+            new { codigo, descuento }, ct);
+        return filas > 0;
+    }
 }

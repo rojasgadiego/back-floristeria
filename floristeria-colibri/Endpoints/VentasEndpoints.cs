@@ -26,6 +26,11 @@ public class VentasEndpoints : EndpointsBase
             .AddEndpointFilter<RespuestaFilter>();
 
         // Literales antes que /{id:int}.
+        ventas.MapPost("/solicitar-codigo-descuento", SolicitarCodigoDescuento)
+            .WithName("SolicitarCodigoDescuento")
+            .WithSummary("Genera un código de 6 dígitos y lo envía por correo al admin")
+            .Produces<ResponseDto>(200).Produces(400);
+
         ventas.MapPost("/promociones-aplicables", PromocionesAplicables)
             .WithName("PromocionesAplicables")
             .WithSummary("Las que aplican a este carrito, con el descuento estimado")
@@ -197,6 +202,36 @@ public class VentasEndpoints : EndpointsBase
     public async Task<ResponseDto> PromocionesAplicables(
         [FromBody] List<VentaLineaPrevia> items, VentasBLL bll, CancellationToken ct)
         => await Consultar(() => bll.PromocionesAplicables(items, ct), "promociones");
+
+    #endregion
+
+    #region Descuento
+
+    /// <summary>
+    /// Genera un código de 6 dígitos, lo guarda en la base con expiración de
+    /// 10 minutos y lo envía por correo a los administradores. El vendedor
+    /// ingresa el código que el admin le dicte para autorizar el descuento.
+    /// </summary>
+    public async Task<ResponseDto> SolicitarCodigoDescuento(
+        [FromBody] SolicitarCodigoDescuentoRequest peticion,
+        VentasBLL bll, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var r = await bll.SolicitarCodigoDescuento(
+                peticion?.Descuento ?? 0, UsuarioActual(http), ct);
+
+            return r.Ok
+                ? CustomUtilz.CreateResponse(HttpStatusCodes.Ok, r.Mensaje, null)
+                : CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, r.Mensaje, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error al solicitar código de descuento");
+            return CustomUtilz.CreateResponse(
+                HttpStatusCodes.InternalServerError, "Error al solicitar el código.", null);
+        }
+    }
 
     #endregion
 

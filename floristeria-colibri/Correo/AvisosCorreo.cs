@@ -44,6 +44,32 @@ public sealed class AvisosCorreo
     // Ventas
     // ============================================================
 
+    /// <summary>
+    /// Envía el código de autorización de descuento a los administradores.
+    /// El código expira en 10 minutos; se menciona en el correo para que
+    /// el admin no lo dicte horas después.
+    /// </summary>
+    public void CodigoDescuentoSolicitado(string codigo, int descuento)
+        => _cola.Encolar("codigo-descuento", (sp, ct) =>
+        {
+            if (Internos.Length == 0) return Task.FromResult<IEnumerable<MensajeCorreo>>([]);
+
+            var fmt = new System.Globalization.CultureInfo("es-CL");
+            var monto = descuento.ToString("C0", fmt);
+
+            var mensaje = new MensajeCorreo(Internos,
+                $"Código de autorización de descuento: {codigo}",
+                Pagina("Autorización de descuento",
+                    Destacado($"Código: <b style=\"font-size:2rem;letter-spacing:.2em\">{codigo}</b>") +
+                    Datos(
+                        ("Descuento solicitado", monto),
+                        ("Válido por", "10 minutos")) +
+                    Parrafo("Dicta este código al vendedor para aprobar el descuento. Si no reconoces esta solicitud, ignora este correo."),
+                    PieInterno));
+
+            return Task.FromResult<IEnumerable<MensajeCorreo>>([mensaje]);
+        });
+
     public void VentaRegistrada(int ventaId) => _cola.Encolar("venta", async (sp, ct) =>
     {
         var ticket = await sp.GetRequiredService<VentasBLL>().Ticket(ventaId, ct);
