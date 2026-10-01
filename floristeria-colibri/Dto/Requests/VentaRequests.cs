@@ -27,7 +27,7 @@ public class RegistrarVentaRequest
     /// Código de 6 dígitos enviado al administrador por correo para autorizar
     /// un descuento sobre el umbral. Se verifica contra la base.
     /// </summary>
-    public AutorizacionRequest? Autorizacion { get; set; }
+    public AutorizacionCodigoRequest? Autorizacion { get; set; }
 
     /// <summary>Si la venta es un despacho a domicilio.</summary>
     public bool EsDespacho { get; set; }
@@ -53,9 +53,20 @@ public class VentaLineaRequest
     public int Cantidad { get; set; }
 }
 
+/// <summary>
+/// Autorización por credenciales de administrador (mermas y otros flujos).
+/// </summary>
 public class AutorizacionRequest
 {
-    /// <summary>Código de 6 dígitos enviado al administrador por correo.</summary>
+    public string Email { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Autorización por código de un solo uso enviado al admin por correo (ventas).
+/// </summary>
+public class AutorizacionCodigoRequest
+{
     public string Codigo { get; set; } = string.Empty;
 }
 
