@@ -281,4 +281,38 @@ public sealed class AvisosCorreo
                     ("Escaneada", m.Escaneado ? "Sí" : "No, se tipeó a mano")),
                 PieInterno))];
     });
+
+    /// <summary>
+    /// Un reporte sobre el umbral: un solo correo con todas sus líneas, no
+    /// uno por cada cosa que cayó en el temblor. Las fotos quedan en la app.
+    /// </summary>
+    public void ReporteMermaRegistrado(int reporteId) => _cola.Encolar("merma-reporte", async (sp, ct) =>
+    {
+        if (Internos.Length == 0) return [];
+
+        var dal = sp.GetRequiredService<MermasDAL>();
+        var lineas = (await dal.MermasDeReporte(reporteId, ct)).ToList();
+        var m = lineas.FirstOrDefault();
+        if (m is null || string.IsNullOrWhiteSpace(m.AutorizadoPor)) return [];
+
+        var total = lineas.Sum(l => l.CostoPerdido);
+        var detalleLineas = string.Join("<br>", lineas.Select(l =>
+            $"{l.Cantidad} × {H(l.Producto)} · {Pesos(l.CostoPerdido)}" +
+            (string.IsNullOrWhiteSpace(l.OrigenCodigo) ? "" : $" <span style=\"color:#888\">({H(l.OrigenCodigo)})</span>")));
+
+        return [new MensajeCorreo(Internos,
+            lineas.Count == 1
+                ? $"Merma sobre el umbral: {m.Cantidad} × {m.Producto} · {Pesos(total)}"
+                : $"Incidente sobre el umbral: {lineas.Count} cosas · {Pesos(total)}",
+            Pagina("Merma autorizada",
+                Destacado($"Se registró una merma de <b>{Pesos(total)}</b> con código de autorización.") +
+                Datos(
+                    ("Qué se perdió", detalleLineas),
+                    ("Motivo", H(m.Motivo)),
+                    ("Detalle", H(m.Detalle ?? "—")),
+                    ("Registró", H(m.Usuario)),
+                    ("Fecha", Fecha(m.CreadoEn)),
+                    ("Fotos", $"{m.Fotos} · se ven en la app, en el detalle de la merma")),
+                PieInterno))];
+    });
 }

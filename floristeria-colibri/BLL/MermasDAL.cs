@@ -25,7 +25,10 @@ public class MermasDAL
     /// <summary>camelCase: el SP lee 'componenteId' del JSONB.</summary>
     private static readonly JsonSerializerOptions JsonCamel = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        // Los enums como texto: la base los castea ('buena'::calidad_reingreso).
+        // Antes la calidad del desarme viajaba como número.
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
     // ============================================================
@@ -224,50 +227,6 @@ public class MermasDAL
     // Escritura
     // ============================================================
 
-    /// <summary>
-    /// `autorizadoPor` es el NOMBRE de quien firmó, no su id: queda congelado
-    /// en el registro aunque esa cuenta después se desactive.
-    /// </summary>
-    public async Task<(int Id, string Error)> Registrar(
-        RegistrarMermaRequest r, string? autorizadoPor, int usuarioId,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            var p = new DynamicParameters();
-            p.Add("ProductoId", r.ProductoId);
-            p.Add("LoteId", r.LoteId);
-            p.Add("PartidaId", r.PartidaId);
-            p.Add("Cantidad", r.Cantidad);
-            p.Add("Motivo", r.Motivo);
-            p.Add("Detalle", r.Detalle);
-            p.Add("Destino", r.Destino.ToString());
-            p.Add("Recuperada", r.CantidadRecuperada);
-            p.Add("Calidad", r.Calidad?.ToString());
-            p.Add("CodigoEscaneado", r.CodigoEscaneado);
-            p.Add("Escaneado", r.Escaneado);
-            p.Add("AutorizadoPor", autorizadoPor);
-            p.Add("UsuarioId", usuarioId);
-
-            var id = await _db.Escalar<int>(
-                """
-                SELECT sp_mer_i_merma(
-                    @ProductoId::int, @LoteId::int, @PartidaId::int, @Cantidad::int,
-                    @Motivo::text, @Detalle::text, @Destino::destino_merma,
-                    @Recuperada::int, @Calidad::calidad_reingreso,
-                    @CodigoEscaneado::text, @Escaneado::boolean,
-                    @AutorizadoPor::text, @UsuarioId::int)
-                """,
-                p, ct);
-
-            return (id, string.Empty);
-        }
-        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
-        {
-            return (0, ErroresPg.Mensaje(ex));
-        }
-    }
-
     public async Task<(int Id, string Error)> DescartarLote(
         int loteId, DescartarLoteRequest r, string? autorizadoPor, int usuarioId,
         CancellationToken ct = default)
@@ -291,23 +250,6 @@ public class MermasDAL
         catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
         {
             return (0, ErroresPg.Mensaje(ex));
-        }
-    }
-
-    public async Task<string> Revertir(
-        int id, string motivo, int usuarioId, CancellationToken ct = default)
-    {
-        try
-        {
-            await _db.Escalar<int>(
-                "SELECT sp_mer_u_revertir(@id, @motivo, @usuarioId)",
-                new { id, motivo, usuarioId }, ct);
-
-            return string.Empty;
-        }
-        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
-        {
-            return ErroresPg.Mensaje(ex);
         }
     }
 
@@ -364,4 +306,93 @@ public class MermasDAL
             return ResultadoOp<ResultadoDesarme>.Error(ErroresPg.Mensaje(ex));
         }
     }
+
+    // ============================================================
+    // Reportes con evidencia (sql/23)
+    // ============================================================
+
+    /// <summary>
+    /// Todo o nada. Las fotos viajan en base64 dentro de un JSON y la base las
+    /// convierte a binario en la misma llamada: así no dependemos de cómo pasa
+    /// arreglos de bytea el driver.
+    /// </summary>
+    public async Task<ResultadoOp<ReporteRegistrado>> RegistrarReporte(
+        RegistrarReporteRequest r, bool soloVitrina, string? autorizadoPor, int usuarioId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var res = await _db.ConsultarUno<ReporteRegistrado>(
+                """
+                SELECT x.reporte_id, x.mermas, x.valor, x.foto_repetida,
+                       now() + interval '10 minutes' AS deshacible_hasta
+                  FROM sp_mer_i_reporte(
+                    @tipo::text, @lineas::jsonb, @motivo::text, @detalle::text,
+                    ARRAY(SELECT decode(f.v->>'base64', 'base64')
+                            FROM jsonb_array_elements(@fotos::jsonb) WITH ORDINALITY AS f(v, n)
+                           ORDER BY f.n),
+                    ARRAY(SELECT f.v->>'tipoMime'
+                            FROM jsonb_array_elements(@fotos::jsonb) WITH ORDINALITY AS f(v, n)
+                           ORDER BY f.n),
+                    @soloVitrina::boolean, @autorizadoPor::text, @usuarioId::int) x
+                """,
+                new
+                {
+                    tipo = r.Tipo,
+                    lineas = JsonSerializer.Serialize(r.Lineas, JsonCamel),
+                    motivo = r.Motivo,
+                    detalle = r.Detalle,
+                    fotos = JsonSerializer.Serialize(r.Fotos, JsonCamel),
+                    soloVitrina,
+                    autorizadoPor,
+                    usuarioId
+                }, ct);
+
+            return res is null
+                ? ResultadoOp<ReporteRegistrado>.Error("La función no devolvió resultado.")
+                : ResultadoOp<ReporteRegistrado>.Exito(res);
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ResultadoOp<ReporteRegistrado>.Error(ErroresPg.Mensaje(ex));
+        }
+    }
+
+    public async Task<string> DeshacerReporte(
+        int reporteId, int usuarioId, CancellationToken ct = default)
+    {
+        try
+        {
+            await _db.Escalar<int>(
+                "SELECT sp_mer_u_deshacer_reporte(@reporteId, @usuarioId)",
+                new { reporteId, usuarioId }, ct);
+            return string.Empty;
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ErroresPg.Mensaje(ex);
+        }
+    }
+
+    /// <summary>Quién registró el reporte. Null si no existe.</summary>
+    public async Task<int?> DuenoReporte(int reporteId, CancellationToken ct = default)
+        => await _db.ConsultarUno<int?>(
+            "SELECT usuario_id FROM merma_reportes WHERE id = @reporteId", new { reporteId }, ct);
+
+    public async Task<IEnumerable<EvidenciaMerma>> Evidencias(int reporteId, CancellationToken ct = default)
+        => await _db.ConsultarLista<EvidenciaMerma>(
+            "SELECT * FROM sp_mer_c_evidencias(@reporteId)", new { reporteId }, ct);
+
+    public async Task<FotoEvidencia?> Evidencia(int id, CancellationToken ct = default)
+        => await _db.ConsultarUno<FotoEvidencia>(
+            "SELECT * FROM sp_mer_c_evidencia(@id)", new { id }, ct);
+
+    /// <summary>Las líneas de un reporte, para el correo.</summary>
+    public async Task<IEnumerable<Merma>> MermasDeReporte(int reporteId, CancellationToken ct = default)
+        => await _db.ConsultarLista<Merma>(
+            """
+            SELECT * FROM sp_mer_c_mermas(p_revertida => NULL, p_tamano => 200)
+             WHERE reporte_id = @reporteId
+            """,
+            new { reporteId }, ct);
 }

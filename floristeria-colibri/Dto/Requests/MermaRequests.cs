@@ -3,22 +3,13 @@ using Colibri.Api.Models.Enums;
 namespace Colibri.Api.Dto.Requests;
 
 /// <summary>
-/// Registrar una merma.
-///
-/// El origen es UNO de los tres: partida (mostrador), lote (bodega) o
-/// ninguno (lo que no controla lotes). Mandar dos es un error de forma que
-/// el SP rechaza.
+/// Registrar un reporte de merma: una cosa (puntual) o varias a la vez
+/// (incidente), con un motivo, la evidencia y, si hace falta, la firma.
 /// </summary>
-public class RegistrarMermaRequest
+public class RegistrarReporteRequest
 {
-    public int ProductoId { get; set; }
-
-    public int? LoteId { get; set; }
-
-    /// <summary>La flor que se marchita en la vitrina sale del mostrador.</summary>
-    public int? PartidaId { get; set; }
-
-    public int Cantidad { get; set; }
+    /// <summary>"puntual" (una línea) o "incidente" (varias).</summary>
+    public string Tipo { get; set; } = "puntual";
 
     /// <summary>
     /// Del catálogo, no libre: "marchita", "Marchita" y "se marchitó" serían
@@ -29,28 +20,58 @@ public class RegistrarMermaRequest
 
     public string? Detalle { get; set; }
 
+    public List<LineaReporteRequest> Lineas { get; set; } = [];
+
+    /// <summary>De 1 a 3 fotos. Sin evidencia no se registra.</summary>
+    public List<FotoEvidenciaRequest> Fotos { get; set; } = [];
+
+    /// <summary>
+    /// Código que la administración recibió por correo, cuando el total supera
+    /// el umbral. Solo sirve en la sesión de quien lo pidió (sql/17).
+    /// </summary>
+    public AutorizacionCodigoRequest? Autorizacion { get; set; }
+}
+
+/// <summary>
+/// Una cosa dañada. El origen es UNO: partida (mostrador), lote (bodega) o
+/// ninguno (lo que no controla lotes, o un armado).
+/// </summary>
+public class LineaReporteRequest
+{
+    public int ProductoId { get; set; }
+    public int? LoteId { get; set; }
+
+    /// <summary>La flor que se marchita en la vitrina sale del mostrador.</summary>
+    public int? PartidaId { get; set; }
+
+    public int Cantidad { get; set; }
+
     public DestinoMerma Destino { get; set; } = DestinoMerma.perdida;
 
-    /// <summary>Cuántas vuelven al stock. Solo con destino reingreso.</summary>
+    /// <summary>Cuántas se pueden vender todavía. Solo con destino reingreso.</summary>
     public int CantidadRecuperada { get; set; }
 
-    /// <summary>En qué estado vuelven. Define la rebaja y la vida útil.</summary>
+    /// <summary>En qué estado quedan. Define la rebaja y la vida útil.</summary>
     public CalidadReingreso? Calidad { get; set; }
 
     /// <summary>Lo que se escaneó o se tipeó, tal cual.</summary>
     public string? CodigoEscaneado { get; set; }
 
     /// <summary>
-    /// true si se leyó con la cámara. Es el dato que después distingue a
-    /// quien registra con el balde en la mano de quien inventa la merma.
+    /// true si se leyó la etiqueta. La base solo lo acepta si el código es el
+    /// del balde o la partida de origen (sql/20).
     /// </summary>
     public bool Escaneado { get; set; }
+}
 
-    /// <summary>
-    /// Código que la administración recibió por correo, cuando el monto supera
-    /// el umbral. Solo sirve en la sesión de quien lo pidió (sql/17).
-    /// </summary>
-    public AutorizacionCodigoRequest? Autorizacion { get; set; }
+/// <summary>
+/// Una foto, en base64 solo para viajar en el JSON: se guarda como binario
+/// (bytea) en la base.
+/// </summary>
+public class FotoEvidenciaRequest
+{
+    public string Base64 { get; set; } = string.Empty;
+    public string TipoMime { get; set; } = "image/jpeg";
 }
 
 public class DescartarLoteRequest
@@ -79,11 +100,6 @@ public class MotivoMermaRequest
     public bool Activo { get; set; } = true;
 
     public int? Orden { get; set; }
-}
-
-public class RevertirMermaRequest
-{
-    public string Motivo { get; set; } = string.Empty;
 }
 
 public class DesarmeRequest

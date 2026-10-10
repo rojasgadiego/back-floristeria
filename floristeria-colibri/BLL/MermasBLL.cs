@@ -182,60 +182,6 @@ public class MermasBLL
     // Escritura
     // ============================================================
 
-    /// <summary>
-    /// Registra la merma, verificando la autorización cuando el monto la
-    /// necesita. El SP solo exige que la merma cara venga firmada; qué cuenta
-    /// como firma lo decide VerificarAutorizacion.
-    /// </summary>
-    /// <param name="soloMostrador">
-    /// true para el vendedor: puede registrar, pero solo mermas de una partida
-    /// del mostrador, que es lo que tiene a la vista en el mesón.
-    /// </param>
-    public async Task<ResultadoOp<Merma>> Registrar(
-        RegistrarMermaRequest r, int usuarioId, bool soloMostrador = false,
-        bool esAdmin = false, CancellationToken ct = default)
-    {
-        if (usuarioId <= 0) return ResultadoOp<Merma>.Error("Sesión inválida.");
-        if (soloMostrador && r.PartidaId is null) return ResultadoOp<Merma>.Error(SoloMostrador);
-        if (r.ProductoId <= 0) return ResultadoOp<Merma>.Error("Indica el producto.");
-        if (r.Cantidad < 1) return ResultadoOp<Merma>.Error("La cantidad debe ser al menos 1.");
-
-        if (string.IsNullOrWhiteSpace(r.Motivo))
-            return ResultadoOp<Merma>.Error("Indica el motivo de la merma.");
-
-        if (r.LoteId.HasValue && r.PartidaId.HasValue)
-            return ResultadoOp<Merma>.Error(
-                "La merma sale de un lote o de una partida, no de los dos.");
-
-        if (r.Destino == DestinoMerma.reingreso)
-        {
-            if (r.CantidadRecuperada < 1)
-                return ResultadoOp<Merma>.Error("Indica cuántas varas se recuperan.");
-
-            if (r.CantidadRecuperada > r.Cantidad)
-                return ResultadoOp<Merma>.Error(
-                    $"No se pueden recuperar {r.CantidadRecuperada} de {r.Cantidad} varas.");
-
-            if (r.Calidad is null)
-                return ResultadoOp<Merma>.Error("Indica en qué estado vuelve la flor.");
-        }
-
-        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
-        if (errorAuth is not null) return ResultadoOp<Merma>.Error(errorAuth);
-
-        var (id, error) = await _dal.Registrar(r, autorizadoPor, usuarioId, ct);
-        if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
-
-        // Con código = sobre el umbral: eso es lo que se avisa. La merma de
-        // una admin no: la firmó ella misma y avisarle sería ruido.
-        if (autorizadoPor is not null && !esAdmin) _avisos.MermaRegistrada(id);
-
-        var merma = await _dal.ConsultarUna(id, null, ct);
-        return merma is null
-            ? ResultadoOp<Merma>.Error("La merma se registró pero no se pudo leer.")
-            : ResultadoOp<Merma>.Exito(merma);
-    }
-
     public async Task<ResultadoOp<Merma>> DescartarLote(
         int loteId, DescartarLoteRequest r, int usuarioId, bool esAdmin = false,
         CancellationToken ct = default)
@@ -256,29 +202,6 @@ public class MermasBLL
         var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
             ? ResultadoOp<Merma>.Error("El lote se descartó pero no se pudo leer la merma.")
-            : ResultadoOp<Merma>.Exito(merma);
-    }
-
-    /// <summary>
-    /// El motivo es obligatorio y con mínimo de largo: revertir deshace un
-    /// registro de pérdida, y dentro de seis meses alguien va a querer saber
-    /// por qué.
-    /// </summary>
-    public async Task<ResultadoOp<Merma>> Revertir(
-        int id, string motivo, int usuarioId, CancellationToken ct = default)
-    {
-        if (id <= 0) return ResultadoOp<Merma>.Error("Indica la merma.");
-
-        if (string.IsNullOrWhiteSpace(motivo) || motivo.Trim().Length < 5)
-            return ResultadoOp<Merma>.Error(
-                "Explica por qué se revierte, con al menos 5 caracteres.");
-
-        var error = await _dal.Revertir(id, motivo.Trim(), usuarioId, ct);
-        if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
-
-        var merma = await _dal.ConsultarUna(id, null, ct);
-        return merma is null
-            ? ResultadoOp<Merma>.Error("La merma no existe.")
             : ResultadoOp<Merma>.Exito(merma);
     }
 
@@ -338,6 +261,111 @@ public class MermasBLL
 
         _limite.Exito(clave);
         return ("Código por correo", null);
+    }
+
+    // ============================================================
+    // Reportes con evidencia
+    // ============================================================
+
+    /// <summary>Lo que acepta la evidencia: lo que produce la cámara del teléfono.</summary>
+    private static readonly string[] TiposFoto = ["image/jpeg", "image/png", "image/webp"];
+
+    /// <summary>Una foto ya reducida pesa ~200 KB. 5 MB deja margen sin abrir la puerta a cualquier cosa.</summary>
+    public const int PesoMaximoFoto = 5 * 1024 * 1024;
+
+    /// <summary>
+    /// Registra el reporte: una cosa (puntual) o varias (incidente), con su
+    /// evidencia y, si el total pasa el tope, la firma.
+    /// </summary>
+    /// <param name="soloVitrina">
+    /// true para la vendedora: puede registrar lo de la vitrina (partidas del
+    /// mostrador y ramos armados), no lo de bodega.
+    /// </param>
+    public async Task<ResultadoOp<ReporteRegistrado>> RegistrarReporte(
+        RegistrarReporteRequest r, int usuarioId, bool soloVitrina, bool esAdmin,
+        CancellationToken ct = default)
+    {
+        if (usuarioId <= 0) return ResultadoOp<ReporteRegistrado>.Error("Sesión inválida.");
+        if (r.Tipo is not ("puntual" or "incidente"))
+            return ResultadoOp<ReporteRegistrado>.Error("Indica si es una merma puntual o un incidente.");
+        if (string.IsNullOrWhiteSpace(r.Motivo))
+            return ResultadoOp<ReporteRegistrado>.Error("Indica el motivo.");
+        if (r.Lineas is null or { Count: 0 })
+            return ResultadoOp<ReporteRegistrado>.Error("Indica qué se dañó.");
+        if (r.Lineas.Any(l => l.ProductoId <= 0 || l.Cantidad < 1))
+            return ResultadoOp<ReporteRegistrado>.Error("Cada cosa necesita su producto y una cantidad de al menos 1.");
+        if (r.Lineas.Any(l => l.LoteId.HasValue && l.PartidaId.HasValue))
+            return ResultadoOp<ReporteRegistrado>.Error("Cada cosa sale de un balde o de una partida, no de los dos.");
+
+        var errorFotos = ValidarFotos(r.Fotos);
+        if (errorFotos is not null) return ResultadoOp<ReporteRegistrado>.Error(errorFotos);
+
+        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
+        if (errorAuth is not null) return ResultadoOp<ReporteRegistrado>.Error(errorAuth);
+
+        var res = await _dal.RegistrarReporte(r, soloVitrina, autorizadoPor, usuarioId, ct);
+
+        // Con código = sobre el tope: eso es lo que se avisa, una vez por
+        // reporte. La de una admin no: la firmó ella misma.
+        if (res.Ok && autorizadoPor is not null && !esAdmin)
+            _avisos.ReporteMermaRegistrado(res.Datos!.ReporteId);
+
+        return res;
+    }
+
+    /// <summary>
+    /// Que sean fotos de verdad y no cualquier archivo: se mira el tipo
+    /// declarado, el tamaño y la firma de los primeros bytes.
+    /// </summary>
+    private static string? ValidarFotos(List<FotoEvidenciaRequest>? fotos)
+    {
+        if (fotos is null or { Count: 0 }) return "Agrega al menos una foto de lo que se dañó.";
+        if (fotos.Count > 3) return "Son máximo 3 fotos por reporte.";
+
+        foreach (var f in fotos)
+        {
+            if (!TiposFoto.Contains(f.TipoMime)) return "La foto tiene que ser JPG, PNG o WEBP.";
+
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(f.Base64 ?? ""); }
+            catch (FormatException) { return "Una de las fotos llegó dañada. Vuelve a tomarla."; }
+
+            if (bytes.Length == 0) return "Una de las fotos llegó vacía. Vuelve a tomarla.";
+            if (bytes.Length > PesoMaximoFoto) return "Una foto pesa demasiado. El máximo es 5 MB.";
+
+            var esImagen =
+                (bytes.Length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) ||
+                (bytes.Length > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) ||
+                (bytes.Length > 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+                 bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50);
+
+            if (!esImagen) return "Uno de los archivos no es una foto.";
+        }
+
+        return null;
+    }
+
+    /// <summary>Solo quien registró, dentro de 10 minutos (lo valida la base).</summary>
+    public async Task<string> DeshacerReporte(int reporteId, int usuarioId, CancellationToken ct = default)
+        => reporteId <= 0 ? "Indica el reporte." : await _dal.DeshacerReporte(reporteId, usuarioId, ct);
+
+    /// <summary>
+    /// Las fotos son de quien registró y de la administración. Null si no
+    /// existe o no le corresponde: mejor no confirmar que existe.
+    /// </summary>
+    public async Task<IEnumerable<EvidenciaMerma>?> Evidencias(
+        int reporteId, int usuarioId, bool esAdmin, CancellationToken ct = default)
+    {
+        var dueno = await _dal.DuenoReporte(reporteId, ct);
+        if (dueno is null || (!esAdmin && dueno != usuarioId)) return null;
+        return await _dal.Evidencias(reporteId, ct);
+    }
+
+    public async Task<FotoEvidencia?> Evidencia(
+        int id, int usuarioId, bool esAdmin, CancellationToken ct = default)
+    {
+        var f = await _dal.Evidencia(id, ct);
+        return f is null || (!esAdmin && f.UsuarioId != usuarioId) ? null : f;
     }
 
     // ============================================================

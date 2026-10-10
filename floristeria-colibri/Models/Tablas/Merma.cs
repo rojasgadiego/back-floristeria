@@ -96,6 +96,15 @@ public class Merma
     /// </summary>
     public int? DesarmeGrupo { get; set; }
 
+    /// <summary>El reporte al que pertenece (sql/23). Null en lo anterior y en los conteos.</summary>
+    public int? ReporteId { get; set; }
+
+    /// <summary>Fotos de evidencia de su reporte.</summary>
+    public int Fotos { get; set; }
+
+    /// <summary>Quién la registró: con esto la pantalla sabe si puede ofrecer "deshacer".</summary>
+    public int? UsuarioId { get; set; }
+
     public DateTime CreadoEn { get; set; }
 
     [JsonIgnore]
@@ -367,4 +376,43 @@ public class PatronesMerma
     public IReadOnlyList<PatronUsuario> PorUsuario { get; set; } = Array.Empty<PatronUsuario>();
     public IReadOnlyList<PatronHorario> PorHora { get; set; } = Array.Empty<PatronHorario>();
     public IReadOnlyList<MermaSinEscanear> SinEscanear { get; set; } = Array.Empty<MermaSinEscanear>();
+}
+
+/// <summary>Lo que devuelve registrar un reporte (sp_mer_i_reporte).</summary>
+public class ReporteRegistrado
+{
+    public int ReporteId { get; set; }
+    public int Mermas { get; set; }
+
+    /// <summary>El valor con que se decidió la firma (a costo, o a precio si no había costo).</summary>
+    public int Valor { get; set; }
+
+    /// <summary>Alguna foto ya estaba en otro reporte: para que la admin lo revise.</summary>
+    public bool FotoRepetida { get; set; }
+
+    /// <summary>Hasta cuándo se puede deshacer.</summary>
+    public DateTime DeshacibleHasta { get; set; }
+}
+
+/// <summary>Una foto de evidencia, sin los bytes (sp_mer_c_evidencias).</summary>
+public class EvidenciaMerma
+{
+    public int Id { get; set; }
+    public string TipoMime { get; set; } = "image/jpeg";
+    public int Bytes { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+
+    /// <summary>La misma foto aparece en otro reporte.</summary>
+    public bool Repetida { get; set; }
+
+    public DateTime CreadoEn { get; set; }
+}
+
+/// <summary>La foto con sus bytes y de quién es el reporte (sp_mer_c_evidencia).</summary>
+public class FotoEvidencia
+{
+    public byte[] Foto { get; set; } = [];
+    public string TipoMime { get; set; } = "image/jpeg";
+    public int ReporteId { get; set; }
+    public int? UsuarioId { get; set; }
 }

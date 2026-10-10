@@ -86,10 +86,24 @@ public class MermasEndpoints : EndpointsBase
             .RequireAuthorization(Politicas.Inventario)
             .Produces<ResponseDto>(201).Produces(400);
 
-        mer.MapPost("/", Registrar)
-            .WithName("RegistrarMerma")
-            .WithSummary("Saca varas del inventario. El costo lo pone el sistema, no el formulario.")
+        // ═══ Reportes con evidencia (sql/23) ═══
+        // Reemplazan al registro suelto: toda merma lleva foto, y ya no hay
+        // reversa de administración, solo "deshacer" en los 10 minutos.
+
+        mer.MapPost("/reportes", RegistrarReporte)
+            .WithName("RegistrarReporteMerma")
+            .WithSummary("Una cosa o varias (incidente), con 1 a 3 fotos. El costo lo pone el sistema.")
             .Produces<ResponseDto>(201).Produces(400);
+
+        mer.MapPost("/reportes/{id:int}/deshacer", DeshacerReporte)
+            .WithName("DeshacerReporteMerma")
+            .WithSummary("Solo quien lo registró, dentro de 10 minutos")
+            .Produces<ResponseDto>(200).Produces(400);
+
+        mer.MapGet("/reportes/{id:int}/evidencias", EvidenciasReporte)
+            .WithName("EvidenciasReporteMerma")
+            .WithSummary("Las fotos del reporte, sin los bytes. De quien lo registró y de la administración.")
+            .Produces<ResponseDto>(200).Produces(404);
 
         mer.MapPost("/lote/{loteId:int}/descartar", DescartarLote)
             .WithName("DescartarLote")
@@ -103,11 +117,15 @@ public class MermasEndpoints : EndpointsBase
             .WithName("ObtenerMerma")
             .Produces<ResponseDto>(200).Produces(404);
 
-        mer.MapPost("/{id:int}/revertir", Revertir)
-            .WithName("RevertirMerma")
-            .WithSummary("Las varas vuelven a su lote. Solo si lo recuperado no se vendió.")
-            .RequireAuthorization(Politicas.Admin)
-            .Produces<ResponseDto>(200).Produces(400);
+
+        // Las fotos devuelven bytes, no el sobre JSON: van en un grupo sin
+        // RespuestaFilter.
+        app.MapGroup("/api/mermas/evidencias")
+            .WithTags("Mermas")
+            .RequireAuthorization(Politicas.VerInventario)
+            .MapGet("/{id:int}", VerEvidencia)
+            .WithName("VerEvidenciaMerma")
+            .Produces(200, contentType: "image/jpeg").Produces(404);
     }
 
     /// <summary>
@@ -199,19 +217,53 @@ public class MermasEndpoints : EndpointsBase
 
     #region Escritura
 
-    /// <summary>
-    /// El mensaje de éxito dice qué se recuperó, no solo qué se perdió: es lo
-    /// que cambia la sensación de haber botado plata por la de haber salvado
-    /// algo.
-    /// </summary>
-    public async Task<ResponseDto> Registrar(
-        [FromBody] RegistrarMermaRequest peticion, MermasBLL bll,
+    public async Task<ResponseDto> RegistrarReporte(
+        [FromBody] RegistrarReporteRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.Registrar(peticion, UsuarioActual(http), SoloMostrador(http), EsAdmin(http), ct),
-            m => m.CantidadRecuperada > 0
-                ? $"{m.Cantidad} de {m.Producto} · {m.CantidadRecuperada} recuperadas en {m.LoteRecuperacion}"
-                : $"{m.Cantidad} de {m.Producto} · ${m.CostoPerdido:N0} de pérdida",
+        => await Escribir(
+            () => bll.RegistrarReporte(peticion, UsuarioActual(http), SoloMostrador(http), EsAdmin(http), ct),
+            r => r.Mermas == 1
+                ? "Merma registrada · la puedes deshacer durante 10 minutos"
+                : $"Incidente registrado · {r.Mermas} cosas · lo puedes deshacer durante 10 minutos",
             HttpStatusCodes.Created, "registrar la merma");
+
+    public async Task<ResponseDto> DeshacerReporte(
+        int id, MermasBLL bll, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var error = await bll.DeshacerReporte(id, UsuarioActual(http), ct);
+            return string.IsNullOrEmpty(error)
+                ? CustomUtilz.CreateResponse(HttpStatusCodes.Ok, "Merma deshecha · todo volvió a su lugar", null)
+                : CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, error, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error al deshacer el reporte {Id}", id);
+            return CustomUtilz.CreateResponse(
+                HttpStatusCodes.InternalServerError, "Error al deshacer la merma.", null);
+        }
+    }
+
+    public async Task<ResponseDto> EvidenciasReporte(
+        int id, MermasBLL bll, HttpContext http, CancellationToken ct)
+        => await ConsultarUno(
+            () => bll.Evidencias(id, UsuarioActual(http), EsAdmin(http), ct),
+            "Evidencias", $"No existe el reporte {id}.");
+
+    /// <summary>
+    /// La foto tal cual, con caché privada: es evidencia, no un recurso
+    /// público, pero tampoco cambia nunca.
+    /// </summary>
+    public async Task<IResult> VerEvidencia(
+        int id, MermasBLL bll, HttpContext http, CancellationToken ct)
+    {
+        var f = await bll.Evidencia(id, UsuarioActual(http), EsAdmin(http), ct);
+        if (f is null) return Results.NotFound();
+
+        http.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+        return Results.File(f.Foto, f.TipoMime);
+    }
 
     public async Task<ResponseDto> SolicitarCodigo(
         [FromBody] SolicitarCodigoMermaRequest peticion, MermasBLL bll,
@@ -238,15 +290,6 @@ public class MermasEndpoints : EndpointsBase
         => await Escribir(() => bll.DescartarLote(loteId, peticion, UsuarioActual(http), EsAdmin(http), ct),
             m => $"Lote {m.OrigenCodigo} dado de baja · {m.Cantidad} varas",
             HttpStatusCodes.Created, "descartar el lote");
-
-    public async Task<ResponseDto> Revertir(
-        int id, [FromBody] RevertirMermaRequest peticion, MermasBLL bll,
-        HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.Revertir(id, peticion?.Motivo ?? "", UsuarioActual(http), ct),
-            m => m.DesarmeGrupo is not null
-                ? "Desarme revertido · el armado volvió al stock y se anularon los lotes recuperados"
-                : $"Merma revertida · {m.Cantidad} de {m.Producto} volvieron al inventario",
-            HttpStatusCodes.Ok, "revertir la merma");
 
     public async Task<ResponseDto> Desarmar(
         int productoId, [FromBody] DesarmeRequest peticion, MermasBLL bll,
