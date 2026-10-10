@@ -32,6 +32,45 @@ public class InventarioDAL
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    // ============================================================
+    // Conteo de stock (sql/22)
+    // ============================================================
+
+    public async Task<IEnumerable<FilaConteo>> PlanillaConteo(
+        int? categoriaId, CancellationToken ct = default)
+        => await _db.ConsultarLista<FilaConteo>(
+            "SELECT * FROM sp_inv_c_conteo(@categoriaId::int)", new { categoriaId }, ct);
+
+    /// <summary>
+    /// Todo o nada: si una línea falla, la función aborta y no se aplica
+    /// ninguna. `autorizadoPor` firma las mermas de los faltantes.
+    /// </summary>
+    public async Task<ResultadoOp<List<LineaConteoAplicada>>> AplicarConteo(
+        ConteoRequest r, int usuarioId, string? autorizadoPor, CancellationToken ct = default)
+    {
+        try
+        {
+            var filas = await _db.ConsultarLista<LineaConteoAplicada>(
+                """
+                SELECT * FROM sp_inv_i_conteo(
+                    @items::jsonb, @detalle::text, @usuarioId::int, @autorizadoPor::text)
+                """,
+                new
+                {
+                    items = JsonSerializer.Serialize(r.Items, JsonCamelReceta),
+                    detalle = r.Detalle,
+                    usuarioId,
+                    autorizadoPor
+                }, ct);
+
+            return ResultadoOp<List<LineaConteoAplicada>>.Exito(filas.ToList());
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ResultadoOp<List<LineaConteoAplicada>>.Error(ErroresPg.Mensaje(ex));
+        }
+    }
+
     public async Task<IEnumerable<LineaReceta>> ConsultarReceta(
         int productoId, CancellationToken ct = default)
         => await _db.ConsultarLista<LineaReceta>(

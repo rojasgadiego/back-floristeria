@@ -102,6 +102,18 @@ public class InventarioEndpoints : EndpointsBase
             .RequireAuthorization(Politicas.Inventario)
             .Produces<ResponseDto>(201).Produces(400).Produces(401);
 
+        inventario.MapGet("/conteo", PlanillaConteo)
+            .WithName("PlanillaConteo")
+            .WithSummary("Lo que hay que contar en bodega: por producto, o por balde si tiene lotes")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200);
+
+        inventario.MapPost("/conteo", AplicarConteo)
+            .WithName("AplicarConteo")
+            .WithSummary("Ajusta el stock a lo contado. Los faltantes quedan como merma")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200).Produces(400);
+
         inventario.MapGet("/movimientos", Movimientos)
             .WithName("Movimientos")
             .WithSummary("Libro mayor: toda entrada y salida con su motivo y responsable")
@@ -180,6 +192,38 @@ public class InventarioEndpoints : EndpointsBase
     #endregion
 
     #region Escritura
+
+    public async Task<ResponseDto> PlanillaConteo(
+        [FromQuery] int? categoriaId, InventarioBLL bll, CancellationToken ct)
+        => await Consultar(() => bll.PlanillaConteo(categoriaId, ct), "planilla de conteo");
+
+    public async Task<ResponseDto> AplicarConteo(
+        [FromBody] ConteoRequest peticion, InventarioBLL bll, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            if (peticion is null)
+                return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, "Request inválido", null);
+
+            var r = await bll.AplicarConteo(peticion, UsuarioActual(http), ct);
+            if (!r.Ok) return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, r.Mensaje, null);
+
+            var cambios = r.Datos!.Count(l => l.Diferencia != 0);
+            var faltantes = r.Datos!.Count(l => l.Diferencia < 0);
+            var mensaje = cambios == 0
+                ? "Conteo aplicado · todo cuadraba"
+                : $"Conteo aplicado · {cambios} ajuste(s)" +
+                  (faltantes > 0 ? $", {faltantes} faltante(s) registrado(s) como merma" : "");
+
+            return CustomUtilz.CreateResponse(HttpStatusCodes.Ok, mensaje, r.Datos);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error al aplicar el conteo");
+            return CustomUtilz.CreateResponse(
+                HttpStatusCodes.InternalServerError, $"Error al aplicar el conteo: {ex.Message}", null);
+        }
+    }
 
     public async Task<ResponseDto> CrearProducto(
         [FromBody] CrearProductoRequest peticion, InventarioBLL bll, CancellationToken ct)

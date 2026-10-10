@@ -21,7 +21,46 @@ public class InventarioBLL
 {
     private readonly InventarioDAL _dal;
 
-    public InventarioBLL(InventarioDAL dal) => _dal = dal;
+    /// <summary>Para firmar con su nombre las mermas de los faltantes del conteo.</summary>
+    private readonly AccesoDAL _acceso;
+
+    public InventarioBLL(InventarioDAL dal, AccesoDAL acceso)
+    {
+        _dal = dal;
+        _acceso = acceso;
+    }
+
+    // ============================================================
+    // Conteo de stock
+    // ============================================================
+
+    public async Task<IEnumerable<FilaConteo>> PlanillaConteo(
+        int? categoriaId, CancellationToken ct = default)
+        => await _dal.PlanillaConteo(categoriaId, ct);
+
+    /// <summary>
+    /// Aplica lo contado. Lo hace una administradora: los faltantes se
+    /// registran como merma y quedan firmados con su nombre, igual que una
+    /// merma sobre el umbral que ella misma registra.
+    /// </summary>
+    public async Task<ResultadoOp<List<LineaConteoAplicada>>> AplicarConteo(
+        ConteoRequest r, int usuarioId, CancellationToken ct = default)
+    {
+        if (usuarioId <= 0) return ResultadoOp<List<LineaConteoAplicada>>.Error("Sesión inválida.");
+        if (r.Items is null or { Count: 0 })
+            return ResultadoOp<List<LineaConteoAplicada>>.Error("No hay nada contado.");
+        if (r.Items.Any(i => i.Contado < 0))
+            return ResultadoOp<List<LineaConteoAplicada>>.Error("Lo contado no puede ser negativo.");
+
+        // El mismo balde o producto dos veces haría que la segunda línea
+        // pise a la primera sin que nadie lo note.
+        if (r.Items.GroupBy(i => (i.ProductoId, i.LoteId)).Any(g => g.Count() > 1))
+            return ResultadoOp<List<LineaConteoAplicada>>.Error(
+                "Hay un producto o balde repetido en el conteo.");
+
+        var quien = await _acceso.ConsultarUsuario(usuarioId, ct);
+        return await _dal.AplicarConteo(r, usuarioId, quien?.Nombre ?? "Administración", ct);
+    }
 
     // ============================================================
     // Consultas
