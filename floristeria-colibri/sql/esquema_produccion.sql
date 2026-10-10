@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict pAaPU9dhD2l61IgtN9qNj67zT5yGJjqnG9vlhj84wKXAZl7jXWLCYkg7WraVced
+\restrict YXDwvUbkcRSwJNo3SOURYrJs51CVqghA4Rw7RCoz7PiCZwb7BDB9dCr9BVTysi5
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -3382,6 +3382,54 @@ $$;
 
 
 --
+-- Name: sp_inv_c_disponibilidad_armado(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_c_disponibilidad_armado(p_producto_id integer) RETURNS TABLE(componente_id integer, producto text, emoji text, por_unidad integer, controla_lotes boolean, de_primera integer, recuperada integer)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT r.componente_id, p.nombre, p.emoji, r.cantidad, p.controla_lotes,
+           CASE WHEN p.controla_lotes THEN
+               COALESCE((SELECT sum(l.varas_disponibles) FROM lotes l
+                          WHERE l.producto_id = p.id AND l.estado = 'activo' AND l.varas_disponibles > 0
+                            AND l.calidad IS NULL
+                            AND COALESCE(l.fecha_vencimiento >= CURRENT_DATE, true)), 0)::int
+           ELSE COALESCE(p.stock, 0) END,
+           CASE WHEN p.controla_lotes THEN
+               COALESCE((SELECT sum(l.varas_disponibles) FROM lotes l
+                          WHERE l.producto_id = p.id AND l.estado = 'activo' AND l.varas_disponibles > 0
+                            AND l.calidad IS NOT NULL), 0)::int
+           ELSE 0 END
+      FROM recetas r
+      JOIN productos p ON p.id = r.componente_id
+     WHERE r.producto_id = p_producto_id
+     ORDER BY p.nombre;
+$$;
+
+
+--
+-- Name: sp_inv_c_lotes_recuperados_armado(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_c_lotes_recuperados_armado(p_producto_id integer) RETURNS TABLE(lote_id integer, producto_id integer, producto text, codigo text, varas_disponibles integer, dias_en_camara integer, costo_por_vara numeric, calidad public.calidad_reingreso, alerta text)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT l.id, p.id, p.nombre, l.codigo, l.varas_disponibles,
+           (CURRENT_DATE - l.fecha_ingreso)::int, l.costo_por_vara, l.calidad,
+           CASE WHEN l.fecha_vencimiento < CURRENT_DATE THEN 'vencido'
+                WHEN l.fecha_vencimiento <= CURRENT_DATE + 1 THEN 'por_vencer'
+                ELSE 'normal' END
+      FROM recetas r
+      JOIN productos p ON p.id = r.componente_id
+      JOIN lotes l ON l.producto_id = p.id
+     WHERE r.producto_id = p_producto_id
+       AND p.controla_lotes AND l.estado = 'activo' AND l.varas_disponibles > 0
+       AND l.calidad IS NOT NULL
+     ORDER BY l.fecha_vencimiento NULLS LAST, l.id;
+$$;
+
+
+--
 -- Name: sp_inv_c_movimientos(integer, public.tipo_movimiento, date, date, integer, integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3517,12 +3565,18 @@ CREATE FUNCTION public.sp_inv_c_productos(p_buscar text DEFAULT NULL::text, p_ca
             p.costo, p.costo_armado, p.precio, p.precio_ramo,
             p.precio_liquidacion, p.stock_listo, p.minimo,
             p.controla_lotes, p.activo,
-            COALESCE(m.stock, 0) AS venta,
+            -- Un ramo listo está en la vitrina, no en bodega: se vende desde
+            -- sus unidades listas (sp_ven_i_venta) y se cuenta en la vitrina.
+            -- Antes caía en "bodega" con 0 en venta, y el POS, que muestra
+            -- solo lo que está en venta, nunca lo ofrecía.
+            CASE WHEN p.tipo = 'armado' THEN COALESCE(p.stock_listo, 0)
+                 ELSE COALESCE(m.stock, 0) END AS venta,
             -- Los CHECK productos_forma_* dejan uno de los dos en NULL, no
             -- en cero: un simple tiene costo y stock, un armado tiene
             -- costo_armado y stock_listo.
             COALESCE(p.costo, p.costo_armado) AS costo_efe,
-            COALESCE(p.stock, p.stock_listo, 0) AS bodega
+            CASE WHEN p.tipo = 'armado' THEN 0
+                 ELSE COALESCE(p.stock, 0) END AS bodega
         FROM productos p
         LEFT JOIN categorias c   ON c.id = p.categoria_id
         LEFT JOIN vw_mostrador m ON m.producto_id = p.id
@@ -3653,6 +3707,135 @@ CREATE FUNCTION public.sp_inv_d_producto_imagen(p_producto_id integer) RETURNS t
     LANGUAGE sql
     AS $$
     DELETE FROM producto_imagenes WHERE producto_id = p_producto_id RETURNING archivo;
+$$;
+
+
+--
+-- Name: sp_inv_i_armar(integer, integer, integer[], integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_i_armar(p_producto_id integer, p_cantidad integer, p_lotes_autorizados integer[] DEFAULT '{}'::integer[], p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(costo_unitario integer, costo_total integer, listos integer)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_prod     record;
+    r          record;
+    l          record;
+    v_falta    int;
+    v_toma     int;
+    v_costo    numeric := 0;
+    v_costo_c  numeric;
+    v_stock    int;
+    v_listo    int;
+BEGIN
+    IF COALESCE(p_cantidad, 0) < 1 THEN
+        RAISE EXCEPTION 'Indica cuántas unidades armar.';
+    END IF;
+
+    SELECT * INTO v_prod FROM productos WHERE id = p_producto_id FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El producto no existe.';
+    END IF;
+
+    IF v_prod.tipo <> 'armado' THEN
+        RAISE EXCEPTION '% no es un producto armado.', v_prod.nombre;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM recetas WHERE producto_id = p_producto_id) THEN
+        RAISE EXCEPTION '% no tiene receta: no se sabe qué lleva.', v_prod.nombre;
+    END IF;
+
+    FOR r IN
+        SELECT rc.componente_id, rc.cantidad * p_cantidad AS necesita, p.nombre, p.controla_lotes
+          FROM recetas rc JOIN productos p ON p.id = rc.componente_id
+         WHERE rc.producto_id = p_producto_id
+         ORDER BY p.nombre
+    LOOP
+        PERFORM 1 FROM productos WHERE id = r.componente_id FOR UPDATE;
+        v_falta   := r.necesita;
+        v_costo_c := 0;
+
+        IF r.controla_lotes THEN
+            -- Primero la recuperada autorizada, después la de primera sin
+            -- vencer; en cada grupo, lo que vence antes.
+            FOR l IN
+                SELECT lo.id, lo.varas_disponibles, lo.costo_por_vara
+                  FROM lotes lo
+                 WHERE lo.producto_id = r.componente_id
+                   AND lo.estado = 'activo' AND lo.varas_disponibles > 0
+                   AND (   (lo.calidad IS NOT NULL AND lo.id = ANY (COALESCE(p_lotes_autorizados, '{}')))
+                        OR (lo.calidad IS NULL AND COALESCE(lo.fecha_vencimiento >= CURRENT_DATE, true)))
+                 ORDER BY (lo.calidad IS NULL), lo.fecha_vencimiento NULLS LAST, lo.fecha_ingreso, lo.id
+                 FOR UPDATE
+            LOOP
+                EXIT WHEN v_falta = 0;
+                v_toma := LEAST(v_falta, l.varas_disponibles);
+
+                UPDATE lotes
+                   SET varas_disponibles = varas_disponibles - v_toma,
+                       estado = CASE WHEN varas_disponibles - v_toma = 0
+                                     THEN 'agotado'::estado_lote ELSE estado END,
+                       actualizado_en = now()
+                 WHERE id = l.id;
+
+                v_costo_c := v_costo_c + v_toma * l.costo_por_vara;
+                v_falta   := v_falta - v_toma;
+            END LOOP;
+
+            IF v_falta > 0 THEN
+                RAISE EXCEPTION 'Faltan % de % en bodega para armar % unidad(es).',
+                    v_falta, r.nombre, p_cantidad;
+            END IF;
+        ELSE
+            IF (SELECT COALESCE(stock, 0) FROM productos WHERE id = r.componente_id) < r.necesita THEN
+                RAISE EXCEPTION 'Faltan % de % en bodega para armar % unidad(es).',
+                    r.necesita - (SELECT COALESCE(stock, 0) FROM productos WHERE id = r.componente_id),
+                    r.nombre, p_cantidad;
+            END IF;
+
+            v_costo_c := r.necesita * fn_mer_costo_ref(r.componente_id);
+        END IF;
+
+        UPDATE productos
+           SET stock = COALESCE(stock, 0) - r.necesita, actualizado_en = now()
+         WHERE id = r.componente_id
+        RETURNING stock INTO v_stock;
+
+        INSERT INTO movimientos_inventario (
+            producto_id, tipo, cantidad, stock_resultante,
+            motivo, detalle, usuario_id, referencia_tipo, referencia_id
+        )
+        VALUES (
+            r.componente_id, 'consumo', -r.necesita, v_stock,
+            'Armado de ' || v_prod.nombre, p_cantidad || ' unidad(es)',
+            p_usuario_id, 'armado', p_producto_id
+        );
+
+        v_costo := v_costo + v_costo_c;
+    END LOOP;
+
+    -- El costo del ramo: promedio ponderado con lo que ya estaba armado.
+    UPDATE productos SET
+        costo_armado = ROUND((COALESCE(stock_listo, 0) * COALESCE(costo_armado, 0) + v_costo)
+                             / (COALESCE(stock_listo, 0) + p_cantidad)),
+        stock_listo  = COALESCE(stock_listo, 0) + p_cantidad,
+        actualizado_en = now()
+    WHERE id = p_producto_id
+    RETURNING productos.stock_listo INTO v_listo;
+
+    INSERT INTO movimientos_inventario (
+        producto_id, tipo, cantidad, stock_resultante,
+        motivo, detalle, usuario_id, referencia_tipo, referencia_id
+    )
+    VALUES (
+        p_producto_id, 'armado', p_cantidad, v_listo,
+        'Armado', 'Costo ' || ROUND(v_costo / p_cantidad) || ' c/u',
+        p_usuario_id, 'armado', p_producto_id
+    );
+
+    RETURN QUERY SELECT ROUND(v_costo / p_cantidad)::int, ROUND(v_costo)::int, v_listo;
+END;
 $$;
 
 
@@ -4747,7 +4930,10 @@ CREATE FUNCTION public.sp_mer_c_patron_usuario(p_desde date DEFAULT NULL::date, 
     LANGUAGE sql STABLE
     AS $$
     WITH m AS (
-        SELECT me.*
+        -- escaneable: tenía etiqueta (balde o partida) y no salió de un
+        -- conteo. Un ramo, una cinta o un faltante de conteo no se pueden
+        -- escanear: contarlos como "a mano" acusaba a quien más los maneja.
+        SELECT me.*, ((me.lote_id IS NOT NULL OR me.partida_id IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM conteo_lineas cl WHERE cl.merma_id = me.id)) AS escaneable
         FROM mermas me
         WHERE NOT me.revertida
           AND me.creado_en >= COALESCE(p_desde, CURRENT_DATE - 30)
@@ -4758,8 +4944,9 @@ CREATE FUNCTION public.sp_mer_c_patron_usuario(p_desde date DEFAULT NULL::date, 
         count(*),
         sum(m.cantidad),
         sum(m.costo_perdido),
-        count(*) FILTER (WHERE NOT m.escaneado),
-        ROUND(count(*) FILTER (WHERE NOT m.escaneado)::numeric / count(*) * 100, 1),
+        count(*) FILTER (WHERE m.escaneable AND NOT m.escaneado),
+        COALESCE(ROUND(count(*) FILTER (WHERE m.escaneable AND NOT m.escaneado)::numeric
+                       / NULLIF(count(*) FILTER (WHERE m.escaneable), 0) * 100, 1), 0),
         ROUND(avg(m.costo_perdido)),
 
         -- Lo que más merma esa persona. Si siempre es el producto más caro
@@ -4989,19 +5176,21 @@ CREATE FUNCTION public.sp_mer_c_sin_escanear(p_desde date DEFAULT NULL::date, p_
     LANGUAGE sql STABLE
     AS $$
     SELECT
-        m.id, p.nombre, p.emoji,
-        m.cantidad, m.costo_perdido, m.motivo, m.detalle,
-        COALESCE(l.codigo, pm.codigo), u.nombre, m.creado_en
-    FROM mermas m
-    JOIN productos p ON p.id = m.producto_id
-    LEFT JOIN lotes l  ON l.id = m.lote_id
-    LEFT JOIN partidas_mostrador pm ON pm.id = m.partida_id
-    LEFT JOIN usuarios u ON u.id = m.usuario_id
-    WHERE NOT m.revertida
-      AND NOT m.escaneado
-      AND m.creado_en >= COALESCE(p_desde, CURRENT_DATE - 30)
-      AND m.creado_en <  COALESCE(p_hasta, CURRENT_DATE) + 1
-    ORDER BY m.costo_perdido DESC, m.creado_en DESC
+        me.id, p.nombre, p.emoji,
+        me.cantidad, me.costo_perdido, me.motivo, me.detalle,
+        COALESCE(l.codigo, pm.codigo), u.nombre, me.creado_en
+    FROM mermas me
+    JOIN productos p ON p.id = me.producto_id
+    LEFT JOIN lotes l  ON l.id = me.lote_id
+    LEFT JOIN partidas_mostrador pm ON pm.id = me.partida_id
+    LEFT JOIN usuarios u ON u.id = me.usuario_id
+    WHERE NOT me.revertida
+      AND NOT me.escaneado
+      -- Solo lo que tenía etiqueta y no salió de un conteo (ver arriba).
+      AND ((me.lote_id IS NOT NULL OR me.partida_id IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM conteo_lineas cl WHERE cl.merma_id = me.id))
+      AND me.creado_en >= COALESCE(p_desde, CURRENT_DATE - 30)
+      AND me.creado_en <  COALESCE(p_hasta, CURRENT_DATE) + 1
+    ORDER BY me.costo_perdido DESC, me.creado_en DESC
     LIMIT 50;
 $$;
 
@@ -12341,5 +12530,5 @@ ALTER TABLE ONLY public.ventas
 -- PostgreSQL database dump complete
 --
 
-\unrestrict pAaPU9dhD2l61IgtN9qNj67zT5yGJjqnG9vlhj84wKXAZl7jXWLCYkg7WraVced
+\unrestrict YXDwvUbkcRSwJNo3SOURYrJs51CVqghA4Rw7RCoz7PiCZwb7BDB9dCr9BVTysi5
 

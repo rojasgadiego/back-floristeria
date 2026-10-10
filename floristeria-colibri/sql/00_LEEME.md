@@ -62,7 +62,7 @@ WHERE t.typname = 'tipo_producto' ORDER BY enumsortorder;
 2. `02_inv_productos_escritura.sql`
 
 Desde ahí, en orden de número. **En producción están aplicados todos, hasta
-el `26`** (al 2026-10-10).
+el `29`** (al 2026-10-10).
 
 ## La fuente de verdad es `esquema_produccion.sql`
 
