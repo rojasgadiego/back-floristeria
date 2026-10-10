@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict YXDwvUbkcRSwJNo3SOURYrJs51CVqghA4Rw7RCoz7PiCZwb7BDB9dCr9BVTysi5
+\restrict WQ8occa8xgm7FDCaCYtfgU76WadLqGaj4C9Kq0utauPtLLsXBJGxzCM2u6Xcbd6
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -3552,10 +3552,10 @@ $$;
 
 
 --
--- Name: sp_inv_c_productos(text, integer, public.tipo_producto, boolean, boolean, boolean, boolean, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_inv_c_productos(text, integer, public.tipo_producto, boolean, boolean, boolean, boolean, integer, integer, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_inv_c_productos(p_buscar text DEFAULT NULL::text, p_categoria_id integer DEFAULT NULL::integer, p_tipo public.tipo_producto DEFAULT NULL::public.tipo_producto, p_activo boolean DEFAULT NULL::boolean, p_bajo_minimo boolean DEFAULT false, p_controla_lotes boolean DEFAULT NULL::boolean, p_solo_en_venta boolean DEFAULT false, p_pagina integer DEFAULT 1, p_tamano integer DEFAULT 50) RETURNS TABLE(id integer, codigo text, nombre text, emoji text, categoria_id integer, categoria text, tipo public.tipo_producto, costo numeric, costo_armado numeric, costo_efectivo numeric, precio numeric, precio_ramo numeric, precio_liquidacion numeric, margen numeric, en_bodega integer, en_venta integer, stock_total integer, stock_listo integer, minimo integer, controla_lotes boolean, activo boolean, bajo_minimo boolean, total_filas bigint)
+CREATE FUNCTION public.sp_inv_c_productos(p_buscar text DEFAULT NULL::text, p_categoria_id integer DEFAULT NULL::integer, p_tipo public.tipo_producto DEFAULT NULL::public.tipo_producto, p_activo boolean DEFAULT NULL::boolean, p_bajo_minimo boolean DEFAULT false, p_controla_lotes boolean DEFAULT NULL::boolean, p_solo_en_venta boolean DEFAULT false, p_pagina integer DEFAULT 1, p_tamano integer DEFAULT 50, p_con_stock boolean DEFAULT false) RETURNS TABLE(id integer, codigo text, nombre text, emoji text, categoria_id integer, categoria text, tipo public.tipo_producto, costo numeric, costo_armado numeric, costo_efectivo numeric, precio numeric, precio_ramo numeric, precio_liquidacion numeric, margen numeric, en_bodega integer, en_venta integer, stock_total integer, stock_listo integer, minimo integer, controla_lotes boolean, activo boolean, bajo_minimo boolean, total_filas bigint)
     LANGUAGE sql STABLE
     AS $$
     WITH base AS (
@@ -3602,6 +3602,8 @@ CREATE FUNCTION public.sp_inv_c_productos(p_buscar text DEFAULT NULL::text, p_ca
       AND (p_controla_lotes IS NULL OR b.controla_lotes = p_controla_lotes)
       AND (NOT COALESCE(p_bajo_minimo, false) OR (b.bodega + b.venta) <= b.minimo)
       AND (NOT COALESCE(p_solo_en_venta, false) OR b.venta > 0)
+      -- Con algo en bodega o en venta (un ramo listo cuenta: está en vitrina).
+      AND (NOT COALESCE(p_con_stock, false) OR (b.bodega + b.venta) > 0)
     ORDER BY b.nombre
     LIMIT  GREATEST(p_tamano, 1)
     OFFSET GREATEST(p_pagina - 1, 0) * GREATEST(p_tamano, 1);
@@ -12530,5 +12532,5 @@ ALTER TABLE ONLY public.ventas
 -- PostgreSQL database dump complete
 --
 
-\unrestrict YXDwvUbkcRSwJNo3SOURYrJs51CVqghA4Rw7RCoz7PiCZwb7BDB9dCr9BVTysi5
+\unrestrict WQ8occa8xgm7FDCaCYtfgU76WadLqGaj4C9Kq0utauPtLLsXBJGxzCM2u6Xcbd6
 
