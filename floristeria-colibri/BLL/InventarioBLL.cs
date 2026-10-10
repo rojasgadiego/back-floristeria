@@ -37,6 +37,62 @@ public class InventarioBLL
     // Conteo de stock
     // ============================================================
 
+    // ============================================================
+    // Armado
+    // ============================================================
+
+    /// <summary>
+    /// Cuántos se pueden armar con flor de primera y cuántos sumando la
+    /// recuperada, qué falta para la cantidad pedida y qué baldes de
+    /// recuperada se podrían autorizar.
+    /// </summary>
+    public async Task<DisponibilidadArmado?> Disponibilidad(
+        int productoId, int cantidad, CancellationToken ct = default)
+    {
+        var comps = (await _dal.ComponentesArmado(productoId, ct)).ToList();
+        if (comps.Count == 0) return null;
+
+        cantidad = Math.Max(1, cantidad);
+        var conPrimera = comps.Min(x => x.PorUnidad > 0 ? x.DePrimera / x.PorUnidad : 0);
+        var conRecuperada = comps.Min(x => x.PorUnidad > 0 ? (x.DePrimera + x.Recuperada) / x.PorUnidad : 0);
+
+        var faltantes = comps
+            .Where(x => x.DePrimera < x.PorUnidad * cantidad)
+            .Select(x => new FaltanteArmado
+            {
+                ProductoId = x.ComponenteId,
+                Producto = x.Producto,
+                Emoji = x.Emoji,
+                Necesita = x.PorUnidad * cantidad,
+                HayDePrimera = x.DePrimera,
+                HayRecuperada = x.Recuperada,
+                Faltan = Math.Max(0, x.PorUnidad * cantidad - x.DePrimera - x.Recuperada)
+            }).ToList();
+
+        // Solo se sugiere recuperada de lo que falta.
+        var falta = faltantes.Select(f => f.ProductoId).ToHashSet();
+        var sugeridos = (await _dal.LotesRecuperadosArmado(productoId, ct))
+            .Where(l => falta.Contains(l.ProductoId)).ToList();
+
+        return new DisponibilidadArmado
+        {
+            Cantidad = cantidad,
+            PosiblesConPrimera = conPrimera,
+            PosiblesConRecuperada = conRecuperada,
+            AlcanzaConPrimera = faltantes.Count == 0,
+            Faltantes = faltantes,
+            LotesSugeridos = sugeridos
+        };
+    }
+
+    public async Task<ResultadoOp<ResultadoArmado>> Armar(
+        int productoId, ArmarRequest r, int usuarioId, CancellationToken ct = default)
+    {
+        if (productoId <= 0) return ResultadoOp<ResultadoArmado>.Error("Indica el producto.");
+        if (r.Cantidad < 1) return ResultadoOp<ResultadoArmado>.Error("Indica cuántas unidades armar.");
+        return await _dal.Armar(productoId, r, usuarioId, ct);
+    }
+
     public static bool UbicacionValida(string? u) => u is "bodega" or "vitrina";
 
     public async Task<IEnumerable<FilaConteo>> PlanillaConteo(

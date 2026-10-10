@@ -136,6 +136,17 @@ public class InventarioEndpoints : EndpointsBase
             .WithSummary("Productos simples que pueden entrar en una receta")
             .Produces<ResponseDto>(200);
 
+        productos.MapGet("/{id:int}/disponibilidad-armado", DisponibilidadArmado)
+            .WithName("DisponibilidadArmado")
+            .WithSummary("Cuántos se pueden armar con lo que hay en bodega, y qué falta")
+            .Produces<ResponseDto>(200).Produces(404);
+
+        productos.MapPost("/{id:int}/armar", Armar)
+            .WithName("ArmarProducto")
+            .WithSummary("Descuenta los componentes de bodega y suma unidades listas (sp_inv_i_armar)")
+            .RequireAuthorization(Politicas.Inventario)
+            .Produces<ResponseDto>(200).Produces(400);
+
         productos.MapGet("/{id:int}/receta", Receta)
             .WithName("RecetaProducto")
             .WithSummary("Qué componentes lleva un armado y cuántos")
@@ -215,6 +226,29 @@ public class InventarioEndpoints : EndpointsBase
         if (ubicacion == "bodega" && !http.User.IsInRole("admin") && !http.User.IsInRole("bodega"))
             return "La bodega la cuenta bodega. Desde acá puedes contar la vitrina.";
         return null;
+    }
+
+    public async Task<ResponseDto> DisponibilidadArmado(
+        int id, [FromQuery] int? cantidad, InventarioBLL bll, CancellationToken ct)
+        => await ConsultarUno(() => bll.Disponibilidad(id, cantidad ?? 1, ct),
+            "Disponibilidad", "Ese producto no tiene receta: no se sabe qué lleva.");
+
+    public async Task<ResponseDto> Armar(
+        int id, [FromBody] ArmarRequest peticion, InventarioBLL bll, HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            var r = await bll.Armar(id, peticion ?? new ArmarRequest(), UsuarioActual(http), ct);
+            return r.Ok
+                ? CustomUtilz.CreateResponse(HttpStatusCodes.Ok,
+                    $"{peticion!.Cantidad} armado(s) · ${r.Datos!.CostoUnitario:N0} c/u · quedan {r.Datos.Listos} listos", r.Datos)
+                : CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, r.Mensaje, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error al armar {Id}", id);
+            return CustomUtilz.CreateResponse(HttpStatusCodes.InternalServerError, $"Error al armar: {ex.Message}", null);
+        }
     }
 
     public async Task<ResponseDto> PlanillaConteo(

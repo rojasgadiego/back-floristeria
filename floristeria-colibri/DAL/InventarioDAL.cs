@@ -36,6 +36,38 @@ public class InventarioDAL
     // Conteo de stock (sql/22)
     // ============================================================
 
+    // ============================================================
+    // Armado (sql/27)
+    // ============================================================
+
+    public async Task<IEnumerable<ComponenteArmado>> ComponentesArmado(int productoId, CancellationToken ct = default)
+        => await _db.ConsultarLista<ComponenteArmado>(
+            "SELECT * FROM sp_inv_c_disponibilidad_armado(@productoId)", new { productoId }, ct);
+
+    public async Task<IEnumerable<LoteRecuperadoArmado>> LotesRecuperadosArmado(int productoId, CancellationToken ct = default)
+        => await _db.ConsultarLista<LoteRecuperadoArmado>(
+            "SELECT lote_id, producto_id, producto, codigo, varas_disponibles, dias_en_camara, costo_por_vara, calidad::text AS calidad, alerta FROM sp_inv_c_lotes_recuperados_armado(@productoId)",
+            new { productoId }, ct);
+
+    public async Task<ResultadoOp<ResultadoArmado>> Armar(
+        int productoId, ArmarRequest r, int usuarioId, CancellationToken ct = default)
+    {
+        try
+        {
+            var res = await _db.ConsultarUno<ResultadoArmado>(
+                "SELECT * FROM sp_inv_i_armar(@productoId, @cantidad, @lotes::int[], @usuarioId)",
+                new { productoId, cantidad = r.Cantidad, lotes = (r.LotesAutorizados ?? []).ToArray(), usuarioId }, ct);
+
+            return res is null
+                ? ResultadoOp<ResultadoArmado>.Error("La función no devolvió resultado.")
+                : ResultadoOp<ResultadoArmado>.Exito(res);
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ResultadoOp<ResultadoArmado>.Error(ErroresPg.Mensaje(ex));
+        }
+    }
+
     public async Task<IEnumerable<FilaConteo>> PlanillaConteo(
         string ubicacion, int? categoriaId, CancellationToken ct = default)
         => await _db.ConsultarLista<FilaConteo>(
