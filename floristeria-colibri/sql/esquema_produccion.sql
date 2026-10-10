@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict OVLMEu6UIz8Sdj9yOWj3p3npjnA4xagnixgBoKQknlZ082vHM7MEyU08i6Gq9hj
+\restrict pAaPU9dhD2l61IgtN9qNj67zT5yGJjqnG9vlhj84wKXAZl7jXWLCYkg7WraVced
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -1438,7 +1438,7 @@ BEGIN
         SELECT ci.id AS item_id, ci.producto_id, ci.presentacion_id,
                ci.cantidad, ci.varas_totales, ci.costo_por_vara,
                pe.paquetes, pe.varas_por_paquete,
-               p.dias_vida, p.precio
+               p.dias_vida, p.precio, p.controla_lotes
         FROM compra_items ci
         JOIN presentaciones pe ON pe.id = ci.presentacion_id
         JOIN productos p       ON p.id  = ci.producto_id
@@ -1451,46 +1451,80 @@ BEGIN
 
         v_vence := CASE WHEN r.dias_vida IS NOT NULL THEN v_fecha + r.dias_vida END;
 
-        v_codigo := fn_abs_codigo_lote();
+        IF r.controla_lotes THEN
+            v_codigo := fn_abs_codigo_lote();
 
-        INSERT INTO lotes (
-            codigo, producto_id, compra_id, compra_item_id, proveedor_id,
-            presentacion_id, fecha_ingreso, fecha_vencimiento,
-            varas_iniciales, varas_disponibles, costo_por_vara,
-            estado, precio_unitario,
-            -- Queda anotado cómo llegó: sirve al contar el balde y para
-            -- entender un descuadre meses después.
-            notas
-        )
-        VALUES (
-            v_codigo, r.producto_id, p_compra_id, r.item_id, v_prov,
-            r.presentacion_id, v_fecha, v_vence,
-            v_varas, v_varas, r.costo_por_vara,
-            'activo', r.precio,
-            r.cantidad || ' × ' || r.paquetes || ' paquete(s) de ' ||
-            r.varas_por_paquete || ' varas'
-        );
+            INSERT INTO lotes (
+                codigo, producto_id, compra_id, compra_item_id, proveedor_id,
+                presentacion_id, fecha_ingreso, fecha_vencimiento,
+                varas_iniciales, varas_disponibles, costo_por_vara,
+                estado, precio_unitario,
+                -- Queda anotado cómo llegó: sirve al contar el balde y para
+                -- entender un descuadre meses después.
+                notas
+            )
+            VALUES (
+                v_codigo, r.producto_id, p_compra_id, r.item_id, v_prov,
+                r.presentacion_id, v_fecha, v_vence,
+                v_varas, v_varas, r.costo_por_vara,
+                'activo', r.precio,
+                r.cantidad || ' × ' || r.paquetes || ' paquete(s) de ' ||
+                r.varas_por_paquete || ' varas'
+            );
 
-        UPDATE productos
-           SET stock = coalesce(stock, 0) + v_varas,
-               actualizado_en = now()
-         WHERE id = r.producto_id
-        RETURNING stock INTO v_stock;
+            UPDATE productos
+               SET stock = coalesce(stock, 0) + v_varas,
+                   actualizado_en = now()
+             WHERE id = r.producto_id
+            RETURNING stock INTO v_stock;
 
-        INSERT INTO movimientos_inventario (
-            producto_id, lote_id, tipo, cantidad, stock_resultante,
-            motivo, detalle, usuario_id, referencia_tipo, referencia_id
-        )
-        VALUES (
-            r.producto_id,
-            (SELECT id FROM lotes WHERE codigo = v_codigo),
-            'entrada', v_varas, v_stock,
-            'Recepción de compra ' || v_folio,
-            'Lote ' || v_codigo,
-            p_usuario_id, 'compra', p_compra_id
-        );
+            INSERT INTO movimientos_inventario (
+                producto_id, lote_id, tipo, cantidad, stock_resultante,
+                motivo, detalle, usuario_id, referencia_tipo, referencia_id
+            )
+            VALUES (
+                r.producto_id,
+                (SELECT id FROM lotes WHERE codigo = v_codigo),
+                'entrada', v_varas, v_stock,
+                'Recepción de compra ' || v_folio,
+                'Lote ' || v_codigo,
+                p_usuario_id, 'compra', p_compra_id
+            );
 
-        v_lotes := v_lotes + 1;
+            v_lotes := v_lotes + 1;
+        ELSE
+            -- Sin lotes: entra al stock y nada más. Antes se creaba un lote
+            -- igual, que quedaba fantasma (se vende del stock, nunca del
+            -- lote) y el inventario lo contaba dos veces.
+            --
+            -- Y el costo pasa a ser el promedio ponderado entre lo que había
+            -- y lo que llega: es la única fuente de costo de estos productos,
+            -- y sin ella las mermas se valorizaban en cero.
+            UPDATE productos
+               SET costo = CASE
+                       WHEN r.costo_por_vara <= 0 THEN costo
+                       WHEN coalesce(stock, 0) <= 0 OR coalesce(costo, 0) <= 0
+                           THEN ROUND(r.costo_por_vara)
+                       ELSE ROUND((stock * costo + v_varas * r.costo_por_vara)
+                                  / (stock + v_varas))
+                   END,
+                   stock = coalesce(stock, 0) + v_varas,
+                   actualizado_en = now()
+             WHERE id = r.producto_id
+            RETURNING stock INTO v_stock;
+
+            INSERT INTO movimientos_inventario (
+                producto_id, lote_id, tipo, cantidad, stock_resultante,
+                motivo, detalle, usuario_id, referencia_tipo, referencia_id
+            )
+            VALUES (
+                r.producto_id, NULL, 'entrada', v_varas, v_stock,
+                'Recepción de compra ' || v_folio,
+                r.cantidad || ' × ' || r.paquetes || ' × ' || r.varas_por_paquete,
+                p_usuario_id, 'compra', p_compra_id
+            );
+        END IF;
+
         v_total := v_total + v_varas;
         v_prods := v_prods + 1;
     END LOOP;
@@ -3252,6 +3286,102 @@ $$;
 
 
 --
+-- Name: sp_inv_c_conteo(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_c_conteo(p_ubicacion text DEFAULT 'bodega'::text, p_categoria_id integer DEFAULT NULL::integer) RETURNS TABLE(tipo_fila text, producto_id integer, producto text, emoji text, categoria_id integer, categoria text, categoria_orden integer, controla_lotes boolean, lote_id integer, partida_id integer, origen text, fecha_vencimiento date, sistema integer, costo_unitario integer)
+    LANGUAGE sql STABLE
+    AS $$
+    -- ─── Bodega ───
+    SELECT 'producto', p.id, p.nombre, p.emoji, c.id, c.nombre, c.orden, false,
+           NULL::int, NULL::int, NULL::text, NULL::date,
+           COALESCE(p.stock, 0), fn_mer_costo_ref(p.id)
+      FROM productos p JOIN categorias c ON c.id = p.categoria_id
+     WHERE p_ubicacion = 'bodega'
+       AND p.tipo = 'simple' AND p.activo AND NOT p.controla_lotes
+       AND (p_categoria_id IS NULL OR p.categoria_id = p_categoria_id)
+
+    UNION ALL
+    SELECT 'balde', p.id, p.nombre, p.emoji, c.id, c.nombre, c.orden, true,
+           l.id, NULL::int, l.codigo, l.fecha_vencimiento,
+           l.varas_disponibles, ROUND(l.costo_por_vara)::int
+      FROM productos p JOIN categorias c ON c.id = p.categoria_id
+      JOIN lotes l ON l.producto_id = p.id
+     WHERE p_ubicacion = 'bodega'
+       AND p.tipo = 'simple' AND p.activo AND p.controla_lotes
+       AND l.estado = 'activo' AND l.varas_disponibles > 0
+       AND (p_categoria_id IS NULL OR p.categoria_id = p_categoria_id)
+
+    -- Flores sin ningún balde activo: una fila para poder cargarlas.
+    UNION ALL
+    SELECT 'sin_balde', p.id, p.nombre, p.emoji, c.id, c.nombre, c.orden, true,
+           NULL::int, NULL::int, 'sin balde', NULL::date,
+           0, fn_mer_costo_ref(p.id)
+      FROM productos p JOIN categorias c ON c.id = p.categoria_id
+     WHERE p_ubicacion = 'bodega'
+       AND p.tipo = 'simple' AND p.activo AND p.controla_lotes
+       AND NOT EXISTS (SELECT 1 FROM lotes l
+                        WHERE l.producto_id = p.id AND l.estado = 'activo' AND l.varas_disponibles > 0)
+       AND (p_categoria_id IS NULL OR p.categoria_id = p_categoria_id)
+
+    -- ─── Vitrina ───
+    UNION ALL
+    SELECT 'partida', p.id, p.nombre, p.emoji, c.id, c.nombre, c.orden, p.controla_lotes,
+           NULL::int, pm.id, pm.codigo, pm.fecha_vencimiento,
+           pm.cantidad_disponible, ROUND(COALESCE(pm.costo_por_vara, 0))::int
+      FROM partidas_mostrador pm
+      JOIN productos p ON p.id = pm.producto_id
+      JOIN categorias c ON c.id = p.categoria_id
+     WHERE p_ubicacion = 'vitrina' AND pm.cantidad_disponible > 0
+       AND (p_categoria_id IS NULL OR p.categoria_id = p_categoria_id)
+
+    UNION ALL
+    SELECT 'armado', p.id, p.nombre, p.emoji, c.id, c.nombre, c.orden, false,
+           NULL::int, NULL::int, NULL::text, NULL::date,
+           COALESCE(p.stock_listo, 0), fn_mer_costo_ref(p.id)
+      FROM productos p JOIN categorias c ON c.id = p.categoria_id
+     WHERE p_ubicacion = 'vitrina'
+       AND p.tipo = 'armado' AND p.activo AND COALESCE(p.stock_listo, 0) > 0
+       AND (p_categoria_id IS NULL OR p.categoria_id = p_categoria_id)
+
+    ORDER BY 7, 6, 3, 11 NULLS FIRST;
+$$;
+
+
+--
+-- Name: sp_inv_c_conteo_lineas(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_c_conteo_lineas(p_conteo_id integer) RETURNS TABLE(producto_id integer, producto text, emoji text, categoria text, origen text, sistema integer, contado integer, diferencia integer, costo_unitario integer, merma_id integer)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT cl.producto_id, p.nombre, p.emoji, c.nombre, cl.origen,
+           cl.sistema, cl.contado, cl.diferencia, cl.costo_unitario, cl.merma_id
+      FROM conteo_lineas cl
+      JOIN productos p ON p.id = cl.producto_id
+      JOIN categorias c ON c.id = p.categoria_id
+     WHERE cl.conteo_id = p_conteo_id
+     ORDER BY (cl.diferencia = 0), c.orden, p.nombre, cl.origen;
+$$;
+
+
+--
+-- Name: sp_inv_c_conteos(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_c_conteos(p_limite integer DEFAULT 100) RETURNS TABLE(id integer, ubicacion text, detalle text, usuario text, autorizado_por text, creado_en timestamp with time zone, lineas integer, con_diferencia integer, sobrantes integer, faltantes integer, valor_sobrante integer, valor_faltante integer)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT c.id, c.ubicacion, c.detalle, u.nombre, c.autorizado_por, c.creado_en,
+           c.lineas, c.con_diferencia, c.sobrantes, c.faltantes, c.valor_sobrante, c.valor_faltante
+      FROM conteos c
+      LEFT JOIN usuarios u ON u.id = c.usuario_id
+     ORDER BY c.creado_en DESC
+     LIMIT GREATEST(COALESCE(p_limite, 100), 1);
+$$;
+
+
+--
 -- Name: sp_inv_c_movimientos(integer, public.tipo_movimiento, date, date, integer, integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3550,6 +3680,228 @@ BEGIN
     RETURN v_id;
 END;
 $$;
+
+
+--
+-- Name: sp_inv_i_conteo(text, jsonb, text, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_inv_i_conteo(p_ubicacion text, p_items jsonb, p_detalle text DEFAULT NULL::text, p_usuario_id integer DEFAULT NULL::integer, p_autorizado_por text DEFAULT NULL::text) RETURNS integer
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+    it         jsonb;
+    v_n        int := 0;
+    v_conteo   int;
+    v_prod     record;
+    v_lote     record;
+    v_part     record;
+    v_lote_id  int;
+    v_part_id  int;
+    v_contado  int;
+    v_sistema  int;
+    v_dif      int;
+    v_stock    int;
+    v_merma    int;
+    v_origen   text;
+    v_costo    int;
+    v_codigo   text;
+    v_firma    text := nullif(btrim(coalesce(p_autorizado_por, '')), '');
+    v_valor    int;
+    v_umbral   int;
+    v_detalle  text := COALESCE(nullif(btrim(coalesce(p_detalle, '')), ''), 'Conteo de stock');
+BEGIN
+    IF p_ubicacion NOT IN ('bodega', 'vitrina') THEN
+        RAISE EXCEPTION 'Indica si el conteo es de bodega o de vitrina.';
+    END IF;
+
+    IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+        RAISE EXCEPTION 'No hay nada contado.';
+    END IF;
+
+    INSERT INTO conteos (ubicacion, detalle, usuario_id, autorizado_por)
+    VALUES (p_ubicacion, v_detalle, p_usuario_id, v_firma)
+    RETURNING id INTO v_conteo;
+
+    FOR it IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        v_n       := v_n + 1;
+        v_lote_id := (it->>'loteId')::int;
+        v_part_id := (it->>'partidaId')::int;
+        v_contado := (it->>'contado')::int;
+        v_merma   := NULL;
+        v_origen  := NULL;
+
+        IF v_contado IS NULL OR v_contado < 0 THEN
+            RAISE EXCEPTION 'Línea %: lo contado no puede ser negativo.', v_n;
+        END IF;
+
+        SELECT * INTO v_prod FROM productos WHERE id = (it->>'productoId')::int FOR UPDATE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Línea %: el producto no existe.', v_n;
+        END IF;
+
+        -- ─── Lo que dice el sistema, AHORA ───
+        IF v_part_id IS NOT NULL THEN
+            IF p_ubicacion <> 'vitrina' THEN
+                RAISE EXCEPTION 'Las partidas del mostrador se cuentan en la vitrina.';
+            END IF;
+
+            SELECT * INTO v_part FROM partidas_mostrador WHERE id = v_part_id FOR UPDATE;
+            IF NOT FOUND OR v_part.producto_id <> v_prod.id THEN
+                RAISE EXCEPTION 'Línea %: esa partida no es de %.', v_n, v_prod.nombre;
+            END IF;
+
+            v_sistema := v_part.cantidad_disponible;
+            v_origen  := v_part.codigo;
+            v_costo   := ROUND(COALESCE(v_part.costo_por_vara, 0));
+
+        ELSIF v_prod.tipo = 'armado' THEN
+            IF p_ubicacion <> 'vitrina' THEN
+                RAISE EXCEPTION '% es un ramo armado: se cuenta en la vitrina.', v_prod.nombre;
+            END IF;
+
+            v_sistema := COALESCE(v_prod.stock_listo, 0);
+            v_costo   := fn_mer_costo_ref(v_prod.id);
+
+        ELSE
+            IF p_ubicacion <> 'bodega' THEN
+                RAISE EXCEPTION '% se cuenta en bodega.', v_prod.nombre;
+            END IF;
+
+            IF v_prod.controla_lotes AND v_lote_id IS NOT NULL THEN
+                SELECT * INTO v_lote FROM lotes WHERE id = v_lote_id FOR UPDATE;
+                IF NOT FOUND OR v_lote.producto_id <> v_prod.id THEN
+                    RAISE EXCEPTION 'Línea %: ese balde no es de %.', v_n, v_prod.nombre;
+                END IF;
+
+                v_sistema := v_lote.varas_disponibles;
+                v_origen  := v_lote.codigo;
+                v_costo   := ROUND(v_lote.costo_por_vara);
+
+            ELSIF v_prod.controla_lotes THEN
+                -- Flor sin balde: el sistema dice 0 en un balde que aún no existe.
+                v_sistema := 0;
+                v_origen  := 'sin balde';
+                v_costo   := fn_mer_costo_ref(v_prod.id);
+
+            ELSE
+                IF v_lote_id IS NOT NULL THEN
+                    RAISE EXCEPTION '% no se maneja por lotes.', v_prod.nombre;
+                END IF;
+
+                v_sistema := COALESCE(v_prod.stock, 0);
+                v_costo   := fn_mer_costo_ref(v_prod.id);
+            END IF;
+        END IF;
+
+        v_dif := v_contado - v_sistema;
+
+        IF v_dif > 0 THEN
+            -- ─── Sobrante: entra donde se contó ───
+            IF v_part_id IS NOT NULL THEN
+                UPDATE partidas_mostrador
+                   SET cantidad_disponible = cantidad_disponible + v_dif, agotada_en = NULL
+                 WHERE id = v_part_id;
+                v_stock := NULL;
+
+            ELSIF v_prod.tipo = 'armado' THEN
+                UPDATE productos SET stock_listo = COALESCE(stock_listo, 0) + v_dif, actualizado_en = now()
+                 WHERE id = v_prod.id RETURNING stock_listo INTO v_stock;
+
+            ELSE
+                IF v_prod.controla_lotes AND v_lote_id IS NULL THEN
+                    -- El balde nace acá: con vencimiento por sus días de vida y
+                    -- sin precio propio (toma el de la ficha al bajar al mesón).
+                    v_codigo := fn_abs_codigo_lote();
+                    INSERT INTO lotes (
+                        codigo, producto_id, fecha_ingreso, fecha_vencimiento,
+                        varas_iniciales, varas_disponibles, costo_por_vara, estado, notas
+                    )
+                    VALUES (
+                        v_codigo, v_prod.id, CURRENT_DATE,
+                        CASE WHEN v_prod.dias_vida IS NOT NULL THEN CURRENT_DATE + v_prod.dias_vida END,
+                        v_dif, v_dif, v_costo, 'activo', 'Creado en conteo · ' || v_detalle
+                    )
+                    RETURNING id INTO v_lote_id;
+                    v_origen := v_codigo;
+
+                ELSIF v_prod.controla_lotes THEN
+                    UPDATE lotes
+                       SET varas_disponibles = varas_disponibles + v_dif,
+                           estado = CASE WHEN estado = 'agotado' THEN 'activo'::estado_lote ELSE estado END,
+                           actualizado_en = now()
+                     WHERE id = v_lote_id;
+                END IF;
+
+                UPDATE productos SET stock = COALESCE(stock, 0) + v_dif, actualizado_en = now()
+                 WHERE id = v_prod.id RETURNING stock INTO v_stock;
+            END IF;
+
+            INSERT INTO movimientos_inventario (
+                producto_id, lote_id, tipo, cantidad, stock_resultante,
+                motivo, detalle, usuario_id, referencia_tipo, referencia_id
+            )
+            VALUES (
+                v_prod.id, v_lote_id, 'ajuste', v_dif, v_stock,
+                'Conteo de stock', 'Sobrante en ' || p_ubicacion || ' · ' || v_detalle,
+                p_usuario_id, 'conteo', v_conteo
+            );
+
+        ELSIF v_dif < 0 THEN
+            -- ─── Faltante: es una merma, con el mismo registro que cualquiera ───
+            v_merma := sp_mer_i_merma(
+                v_prod.id, v_lote_id, v_part_id, -v_dif,
+                'Faltante en conteo', v_detalle || ' (' || p_ubicacion || ')',
+                'perdida', 0, NULL,
+                NULL, false, v_firma, p_usuario_id);
+        END IF;
+
+        INSERT INTO conteo_lineas (
+            conteo_id, producto_id, lote_id, partida_id, origen,
+            sistema, contado, diferencia, costo_unitario, merma_id
+        )
+        VALUES (
+            v_conteo, v_prod.id, v_lote_id, v_part_id, v_origen,
+            v_sistema, v_contado, v_dif, COALESCE(v_costo, 0), v_merma
+        );
+    END LOOP;
+
+    -- ─── Una firma por el total de faltantes ───
+    SELECT COALESCE(sum(m.valor_autorizacion), 0) INTO v_valor
+      FROM conteo_lineas cl JOIN mermas m ON m.id = cl.merma_id
+     WHERE cl.conteo_id = v_conteo;
+
+    v_umbral := fn_mer_umbral_autorizacion();
+
+    IF v_valor > v_umbral AND v_firma IS NULL THEN
+        RAISE EXCEPTION
+            'Los faltantes suman $% y necesitan autorización: el tope sin firma es $%.',
+            v_valor, v_umbral;
+    END IF;
+
+    -- ─── El resumen, para el historial ───
+    UPDATE conteos c SET
+        lineas         = s.lineas,
+        con_diferencia = s.con_dif,
+        sobrantes      = s.sobrantes,
+        faltantes      = s.faltantes,
+        valor_sobrante = s.v_sob,
+        valor_faltante = s.v_fal
+    FROM (
+        SELECT count(*) AS lineas,
+               count(*) FILTER (WHERE diferencia <> 0) AS con_dif,
+               COALESCE(sum(diferencia) FILTER (WHERE diferencia > 0), 0) AS sobrantes,
+               COALESCE(-sum(diferencia) FILTER (WHERE diferencia < 0), 0) AS faltantes,
+               COALESCE(sum(diferencia * costo_unitario) FILTER (WHERE diferencia > 0), 0) AS v_sob,
+               COALESCE(-sum(diferencia * costo_unitario) FILTER (WHERE diferencia < 0), 0) AS v_fal
+          FROM conteo_lineas WHERE conteo_id = v_conteo
+    ) s
+    WHERE c.id = v_conteo;
+
+    RETURN v_conteo;
+END;
+$_$;
 
 
 --
@@ -4217,10 +4569,40 @@ $$;
 
 
 --
+-- Name: sp_mer_c_evidencia(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_c_evidencia(p_id integer) RETURNS TABLE(foto bytea, tipo_mime text, reporte_id integer, usuario_id integer)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT e.foto, e.tipo_mime, e.reporte_id, r.usuario_id
+      FROM merma_evidencias e
+      JOIN merma_reportes r ON r.id = e.reporte_id
+     WHERE e.id = p_id;
+$$;
+
+
+--
+-- Name: sp_mer_c_evidencias(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_c_evidencias(p_reporte_id integer) RETURNS TABLE(id integer, tipo_mime text, bytes integer, sha256 text, repetida boolean, creado_en timestamp with time zone)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT e.id, e.tipo_mime, e.bytes, e.sha256,
+           EXISTS (SELECT 1 FROM merma_evidencias o WHERE o.sha256 = e.sha256 AND o.id <> e.id),
+           e.creado_en
+      FROM merma_evidencias e
+     WHERE e.reporte_id = p_reporte_id
+     ORDER BY e.id;
+$$;
+
+
+--
 -- Name: sp_mer_c_merma(integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_mer_c_merma(p_id integer, p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(id integer, producto_id integer, producto text, emoji text, lote_id integer, partida_id integer, origen_codigo text, origen text, cantidad integer, motivo text, detalle text, costo_unitario integer, costo_total integer, destino public.destino_merma, cantidad_recuperada integer, cantidad_perdida integer, calidad_reingreso public.calidad_reingreso, lote_recuperacion_id integer, lote_recuperacion text, costo_recuperado_unitario integer, costo_perdido integer, escaneado boolean, autorizado_por text, usuario text, revertida boolean, revertida_por text, revertida_en timestamp with time zone, motivo_reversion text, desarme_grupo integer, creado_en timestamp with time zone, total_filas bigint)
+CREATE FUNCTION public.sp_mer_c_merma(p_id integer, p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(id integer, producto_id integer, producto text, emoji text, lote_id integer, partida_id integer, origen_codigo text, origen text, cantidad integer, motivo text, detalle text, costo_unitario integer, costo_total integer, destino public.destino_merma, cantidad_recuperada integer, cantidad_perdida integer, calidad_reingreso public.calidad_reingreso, lote_recuperacion_id integer, lote_recuperacion text, costo_recuperado_unitario integer, costo_perdido integer, escaneado boolean, autorizado_por text, usuario text, revertida boolean, revertida_por text, revertida_en timestamp with time zone, motivo_reversion text, desarme_grupo integer, reporte_id integer, fotos integer, usuario_id integer, creado_en timestamp with time zone, total_filas bigint)
     LANGUAGE sql STABLE
     AS $$
     SELECT
@@ -4239,6 +4621,9 @@ CREATE FUNCTION public.sp_mer_c_merma(p_id integer, p_usuario_id integer DEFAULT
         m.escaneado, m.autorizado_por,
         u.nombre, m.revertida, ur.nombre, m.revertida_en,
         m.motivo_reversion, m.desarme_grupo,
+        m.reporte_id,
+        (SELECT count(*)::int FROM merma_evidencias e WHERE e.reporte_id = m.reporte_id),
+        m.usuario_id,
         m.creado_en, 1::bigint
     FROM mermas m
     JOIN productos p       ON p.id = m.producto_id
@@ -4256,7 +4641,7 @@ $$;
 -- Name: sp_mer_c_mermas(text, integer, integer, text, public.destino_merma, boolean, date, date, integer, integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_mer_c_mermas(p_buscar text DEFAULT NULL::text, p_producto_id integer DEFAULT NULL::integer, p_lote_id integer DEFAULT NULL::integer, p_motivo text DEFAULT NULL::text, p_destino public.destino_merma DEFAULT NULL::public.destino_merma, p_revertida boolean DEFAULT false, p_desde date DEFAULT NULL::date, p_hasta date DEFAULT NULL::date, p_pagina integer DEFAULT 1, p_tamano integer DEFAULT 50, p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(id integer, producto_id integer, producto text, emoji text, lote_id integer, partida_id integer, origen_codigo text, origen text, cantidad integer, motivo text, detalle text, costo_unitario integer, costo_total integer, destino public.destino_merma, cantidad_recuperada integer, cantidad_perdida integer, calidad_reingreso public.calidad_reingreso, lote_recuperacion_id integer, lote_recuperacion text, costo_recuperado_unitario integer, costo_perdido integer, escaneado boolean, autorizado_por text, usuario text, revertida boolean, revertida_por text, revertida_en timestamp with time zone, motivo_reversion text, desarme_grupo integer, creado_en timestamp with time zone, total_filas bigint)
+CREATE FUNCTION public.sp_mer_c_mermas(p_buscar text DEFAULT NULL::text, p_producto_id integer DEFAULT NULL::integer, p_lote_id integer DEFAULT NULL::integer, p_motivo text DEFAULT NULL::text, p_destino public.destino_merma DEFAULT NULL::public.destino_merma, p_revertida boolean DEFAULT false, p_desde date DEFAULT NULL::date, p_hasta date DEFAULT NULL::date, p_pagina integer DEFAULT 1, p_tamano integer DEFAULT 50, p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(id integer, producto_id integer, producto text, emoji text, lote_id integer, partida_id integer, origen_codigo text, origen text, cantidad integer, motivo text, detalle text, costo_unitario integer, costo_total integer, destino public.destino_merma, cantidad_recuperada integer, cantidad_perdida integer, calidad_reingreso public.calidad_reingreso, lote_recuperacion_id integer, lote_recuperacion text, costo_recuperado_unitario integer, costo_perdido integer, escaneado boolean, autorizado_por text, usuario text, revertida boolean, revertida_por text, revertida_en timestamp with time zone, motivo_reversion text, desarme_grupo integer, reporte_id integer, fotos integer, usuario_id integer, creado_en timestamp with time zone, total_filas bigint)
     LANGUAGE sql STABLE
     AS $$
     SELECT
@@ -4280,6 +4665,9 @@ CREATE FUNCTION public.sp_mer_c_mermas(p_buscar text DEFAULT NULL::text, p_produ
         u.nombre,
         m.revertida, ur.nombre, m.revertida_en,
         m.motivo_reversion, m.desarme_grupo,
+        m.reporte_id,
+        (SELECT count(*)::int FROM merma_evidencias e WHERE e.reporte_id = m.reporte_id),
+        m.usuario_id,
         m.creado_en,
         count(*) OVER ()
     FROM mermas m
@@ -4405,13 +4793,43 @@ CREATE FUNCTION public.sp_mer_c_plan_desarme(p_producto_id integer, p_cantidad i
         r.componente_id, p.nombre, p.emoji, p.controla_lotes,
         r.cantidad,
         r.cantidad * GREATEST(p_cantidad, 1),
-        COALESCE(p.costo, 0),
+        fn_mer_costo_ref(p.id)::numeric,
         p.precio,
         p.dias_vida
     FROM recetas r
     JOIN productos p ON p.id = r.componente_id
     WHERE r.producto_id = p_producto_id
     ORDER BY p.nombre;
+$$;
+
+
+--
+-- Name: sp_mer_c_reportes_pendientes(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_c_reportes_pendientes(p_limite integer DEFAULT 50) RETURNS TABLE(reporte_id integer, tipo text, motivo text, detalle text, usuario text, creado_en timestamp with time zone, autorizado_por text, lineas text, costo_perdido integer, fotos integer, foto_repetida boolean, sin_escanear integer)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT
+        r.id, r.tipo, mm.nombre, r.detalle, u.nombre, r.creado_en, r.autorizado_por,
+        (SELECT string_agg(me.cantidad || ' × ' || p.nombre, ' · ' ORDER BY me.id)
+           FROM mermas me JOIN productos p ON p.id = me.producto_id
+          WHERE me.reporte_id = r.id),
+        (SELECT COALESCE(sum(me.costo_perdido), 0)::int FROM mermas me WHERE me.reporte_id = r.id),
+        (SELECT count(*)::int FROM merma_evidencias e WHERE e.reporte_id = r.id),
+        EXISTS (SELECT 1 FROM merma_evidencias e
+                  JOIN merma_evidencias o ON o.sha256 = e.sha256 AND o.id <> e.id
+                 WHERE e.reporte_id = r.id),
+        -- Tenían etiqueta (balde o partida) y se tipeó a mano.
+        (SELECT count(*)::int FROM mermas me
+          WHERE me.reporte_id = r.id AND NOT me.escaneado
+            AND (me.lote_id IS NOT NULL OR me.partida_id IS NOT NULL))
+      FROM merma_reportes r
+      LEFT JOIN motivos_merma mm ON mm.id = r.motivo_id
+      LEFT JOIN usuarios u ON u.id = r.usuario_id
+     WHERE r.revisado_en IS NULL AND r.deshecho_en IS NULL
+     ORDER BY r.creado_en DESC
+     LIMIT GREATEST(COALESCE(p_limite, 50), 1);
 $$;
 
 
@@ -5107,7 +5525,7 @@ BEGIN
         costo_unitario, costo_total, usuario_id,
         destino, cantidad_recuperada, calidad_reingreso,
         lote_recuperacion_id, costo_recuperado_unitario,
-        codigo_escaneado, escaneado, autorizado_por
+        codigo_escaneado, escaneado, autorizado_por, valor_autorizacion
     )
     VALUES (
         p_producto_id, p_lote_id, p_partida_id, p_cantidad,
@@ -5123,7 +5541,8 @@ BEGIN
         COALESCE(p_escaneado, false)
             AND v_orig_codigo IS NOT NULL
             AND upper(btrim(coalesce(p_codigo_escaneado, ''))) = upper(v_orig_codigo),
-        nullif(btrim(coalesce(p_autorizado_por, '')), '')
+        nullif(btrim(coalesce(p_autorizado_por, '')), ''),
+        v_valor_aut
     )
     RETURNING id INTO v_id;
 
@@ -5191,6 +5610,221 @@ $$;
 
 
 --
+-- Name: sp_mer_i_reporte(text, jsonb, text, text, bytea[], text[], boolean, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_i_reporte(p_tipo text, p_lineas jsonb, p_motivo text, p_detalle text, p_fotos bytea[], p_tipos_foto text[], p_solo_vitrina boolean DEFAULT false, p_autorizado_por text DEFAULT NULL::text, p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(reporte_id integer, mermas integer, valor integer, foto_repetida boolean)
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+    it        jsonb;
+    v_n       int := 0;
+    v_rep     int;
+    v_mot     motivos_merma;
+    v_merma   int;
+    v_prod    record;
+    v_fotos   int := COALESCE(array_length(p_fotos, 1), 0);
+    v_valor   int;
+    v_umbral  int;
+    v_firma   text := nullif(btrim(coalesce(p_autorizado_por, '')), '');
+    v_repe    boolean := false;
+    v_sha     text;
+BEGIN
+    IF p_tipo NOT IN ('puntual', 'incidente') THEN
+        RAISE EXCEPTION 'Tipo de reporte desconocido: %.', p_tipo;
+    END IF;
+
+    IF p_lineas IS NULL OR jsonb_array_length(p_lineas) = 0 THEN
+        RAISE EXCEPTION 'Indica qué se dañó.';
+    END IF;
+
+    IF p_tipo = 'puntual' AND jsonb_array_length(p_lineas) > 1 THEN
+        RAISE EXCEPTION 'Una merma puntual es de una sola cosa. Para varias, registra un incidente.';
+    END IF;
+
+    -- La foto es la evidencia: sin ella, "se marchitó" no se puede revisar.
+    IF v_fotos < 1 THEN
+        RAISE EXCEPTION 'Agrega al menos una foto de lo que se dañó.';
+    END IF;
+
+    IF v_fotos > 3 THEN
+        RAISE EXCEPTION 'Son máximo 3 fotos por reporte.';
+    END IF;
+
+    v_mot := fn_mer_motivo(p_motivo, p_detalle);
+
+    INSERT INTO merma_reportes (tipo, motivo_id, detalle, usuario_id, autorizado_por)
+    VALUES (p_tipo, v_mot.id, nullif(btrim(coalesce(p_detalle, '')), ''), p_usuario_id, v_firma)
+    RETURNING id INTO v_rep;
+
+    -- ─── Las líneas ───
+    FOR it IN SELECT * FROM jsonb_array_elements(p_lineas)
+    LOOP
+        v_n := v_n + 1;
+
+        IF p_solo_vitrina THEN
+            SELECT tipo, nombre INTO v_prod FROM productos WHERE id = (it->>'productoId')::int;
+
+            IF (it->>'partidaId') IS NULL AND v_prod.tipo IS DISTINCT FROM 'armado' THEN
+                RAISE EXCEPTION
+                    'Línea %: desde la vitrina se registra lo del mostrador (partidas PAR-…) o un ramo armado. Lo de bodega lo registra bodega.',
+                    v_n;
+            END IF;
+        END IF;
+
+        -- Cada línea pasa por la misma función que una merma suelta: mismo
+        -- costo, mismas reglas de lote, partida, recuperación y firma.
+        v_merma := sp_mer_i_merma(
+            (it->>'productoId')::int,
+            (it->>'loteId')::int,
+            (it->>'partidaId')::int,
+            (it->>'cantidad')::int,
+            v_mot.nombre, p_detalle,
+            COALESCE(nullif(it->>'destino', ''), 'perdida')::destino_merma,
+            COALESCE((it->>'cantidadRecuperada')::int, 0),
+            nullif(it->>'calidad', '')::calidad_reingreso,
+            it->>'codigoEscaneado',
+            COALESCE((it->>'escaneado')::boolean, false),
+            v_firma, p_usuario_id);
+
+        UPDATE mermas SET reporte_id = v_rep WHERE id = v_merma;
+    END LOOP;
+
+    -- ─── Una firma por el total ───
+    -- Cada línea ya exigió firma si sola pasaba el tope; acá se mira la
+    -- suma, que es lo que un incidente puede escalar de a poco.
+    SELECT COALESCE(sum(m.valor_autorizacion), 0) INTO v_valor
+      FROM mermas m WHERE m.reporte_id = v_rep;
+
+    v_umbral := fn_mer_umbral_autorizacion();
+
+    IF v_valor > v_umbral AND v_firma IS NULL THEN
+        RAISE EXCEPTION
+            'Este reporte suma $% y necesita autorización: el tope sin firma es $%.',
+            v_valor, v_umbral;
+    END IF;
+
+    -- ─── Las fotos ───
+    FOR i IN 1 .. v_fotos LOOP
+        v_sha := encode(sha256(p_fotos[i]), 'hex');
+
+        IF EXISTS (SELECT 1 FROM merma_evidencias e WHERE e.sha256 = v_sha) THEN
+            v_repe := true;
+        END IF;
+
+        INSERT INTO merma_evidencias (reporte_id, foto, tipo_mime, sha256)
+        VALUES (v_rep, p_fotos[i], COALESCE(p_tipos_foto[i], 'image/jpeg'), v_sha);
+    END LOOP;
+
+    RETURN QUERY SELECT v_rep, v_n, v_valor, v_repe;
+END;
+$_$;
+
+
+--
+-- Name: sp_mer_i_reporte_desarme(integer, integer, text, text, jsonb, bytea[], text[], text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_i_reporte_desarme(p_producto_id integer, p_cantidad integer, p_motivo text, p_detalle text, p_lineas jsonb, p_fotos bytea[], p_tipos_foto text[], p_autorizado_por text DEFAULT NULL::text, p_usuario_id integer DEFAULT NULL::integer) RETURNS TABLE(reporte_id integer, mermas integer, recuperadas integer, perdidas integer, foto_repetida boolean)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_rep    int;
+    v_mot    motivos_merma;
+    v_res    record;
+    v_grupo  int;
+    v_fotos  int := COALESCE(array_length(p_fotos, 1), 0);
+    v_firma  text := nullif(btrim(coalesce(p_autorizado_por, '')), '');
+    v_repe   boolean := false;
+    v_sha    text;
+BEGIN
+    IF v_fotos < 1 THEN
+        RAISE EXCEPTION 'Agrega al menos una foto del ramo antes de desarmarlo.';
+    END IF;
+
+    IF v_fotos > 3 THEN
+        RAISE EXCEPTION 'Son máximo 3 fotos por reporte.';
+    END IF;
+
+    v_mot := fn_mer_motivo(p_motivo, p_detalle);
+
+    INSERT INTO merma_reportes (tipo, motivo_id, detalle, usuario_id, autorizado_por)
+    VALUES ('desarme', v_mot.id, nullif(btrim(coalesce(p_detalle, '')), ''), p_usuario_id, v_firma)
+    RETURNING id INTO v_rep;
+
+    SELECT * INTO v_res
+      FROM sp_mer_i_desarme(p_producto_id, p_cantidad, p_motivo, p_detalle,
+                            p_lineas, p_usuario_id, v_firma);
+
+    -- El grupo que acaba de usar el desarme, en esta misma sesión.
+    v_grupo := currval('seq_mer_desarme_grupo');
+
+    UPDATE mermas m SET reporte_id = v_rep WHERE m.desarme_grupo = v_grupo;
+
+    FOR i IN 1 .. v_fotos LOOP
+        v_sha := encode(sha256(p_fotos[i]), 'hex');
+
+        IF EXISTS (SELECT 1 FROM merma_evidencias e WHERE e.sha256 = v_sha) THEN
+            v_repe := true;
+        END IF;
+
+        INSERT INTO merma_evidencias (reporte_id, foto, tipo_mime, sha256)
+        VALUES (v_rep, p_fotos[i], COALESCE(p_tipos_foto[i], 'image/jpeg'), v_sha);
+    END LOOP;
+
+    RETURN QUERY SELECT v_rep, v_res.o_mermas, v_res.o_recuperadas, v_res.o_perdidas, v_repe;
+END;
+$$;
+
+
+--
+-- Name: sp_mer_u_deshacer_reporte(integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_u_deshacer_reporte(p_reporte_id integer, p_usuario_id integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_rep  merma_reportes;
+    r      record;
+BEGIN
+    SELECT * INTO v_rep FROM merma_reportes WHERE id = p_reporte_id FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El reporte no existe.';
+    END IF;
+
+    IF v_rep.deshecho_en IS NOT NULL THEN
+        RAISE EXCEPTION 'Este reporte ya se deshizo.';
+    END IF;
+
+    IF v_rep.usuario_id IS DISTINCT FROM p_usuario_id THEN
+        RAISE EXCEPTION 'Solo quien registró la merma puede deshacerla.';
+    END IF;
+
+    IF v_rep.creado_en < now() - interval '10 minutes' THEN
+        RAISE EXCEPTION 'Pasaron más de 10 minutos: ya no se puede deshacer. Si quedó mal, se corrige con un conteo.';
+    END IF;
+
+    FOR r IN SELECT m.id FROM mermas m WHERE m.reporte_id = p_reporte_id ORDER BY m.id
+    LOOP
+        -- Se vuelve a mirar en cada vuelta: revertir una línea de un
+        -- desarme revierte todas las del grupo.
+        IF NOT (SELECT m.revertida FROM mermas m WHERE m.id = r.id) THEN
+            PERFORM sp_mer_u_revertir(r.id, 'Deshecha por quien la registró', p_usuario_id);
+        END IF;
+    END LOOP;
+
+    UPDATE merma_reportes
+       SET deshecho_en = now(), deshecho_por = p_usuario_id
+     WHERE id = p_reporte_id;
+
+    RETURN p_reporte_id;
+END;
+$$;
+
+
+--
 -- Name: sp_mer_u_motivo(integer, text, text, boolean, public.destino_merma, boolean, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5225,6 +5859,28 @@ BEGIN
 EXCEPTION
     WHEN check_violation THEN
         RAISE EXCEPTION 'Categoría desconocida: %.', p_categoria;
+END;
+$$;
+
+
+--
+-- Name: sp_mer_u_reporte_revisado(integer, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_mer_u_reporte_revisado(p_reporte_id integer, p_usuario_id integer, p_nota text DEFAULT NULL::text) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE merma_reportes
+       SET revisado_en = now(), revisado_por = p_usuario_id,
+           nota_revision = nullif(btrim(coalesce(p_nota, '')), '')
+     WHERE id = p_reporte_id AND revisado_en IS NULL;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Ese reporte no existe o ya se revisó.';
+    END IF;
+
+    RETURN p_reporte_id;
 END;
 $$;
 
@@ -8427,6 +9083,87 @@ CREATE TABLE public.configuracion (
 
 
 --
+-- Name: conteo_lineas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.conteo_lineas (
+    id integer NOT NULL,
+    conteo_id integer NOT NULL,
+    producto_id integer NOT NULL,
+    lote_id integer,
+    partida_id integer,
+    origen text,
+    sistema integer NOT NULL,
+    contado integer NOT NULL,
+    diferencia integer NOT NULL,
+    costo_unitario integer DEFAULT 0 NOT NULL,
+    merma_id integer,
+    CONSTRAINT conteo_lineas_contado_check CHECK ((contado >= 0))
+);
+
+
+--
+-- Name: conteo_lineas_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.conteo_lineas_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: conteo_lineas_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.conteo_lineas_id_seq OWNED BY public.conteo_lineas.id;
+
+
+--
+-- Name: conteos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.conteos (
+    id integer NOT NULL,
+    ubicacion text NOT NULL,
+    detalle text,
+    usuario_id integer,
+    autorizado_por text,
+    creado_en timestamp with time zone DEFAULT now() NOT NULL,
+    lineas integer DEFAULT 0 NOT NULL,
+    con_diferencia integer DEFAULT 0 NOT NULL,
+    sobrantes integer DEFAULT 0 NOT NULL,
+    faltantes integer DEFAULT 0 NOT NULL,
+    valor_sobrante integer DEFAULT 0 NOT NULL,
+    valor_faltante integer DEFAULT 0 NOT NULL,
+    CONSTRAINT conteos_ubicacion_check CHECK ((ubicacion = ANY (ARRAY['bodega'::text, 'vitrina'::text])))
+);
+
+
+--
+-- Name: conteos_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.conteos_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: conteos_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.conteos_id_seq OWNED BY public.conteos.id;
+
+
+--
 -- Name: cotizacion_cuotas_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -8601,6 +9338,84 @@ ALTER SEQUENCE public.lotes_id_seq OWNED BY public.lotes.id;
 
 
 --
+-- Name: merma_evidencias; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.merma_evidencias (
+    id integer NOT NULL,
+    reporte_id integer NOT NULL,
+    foto bytea NOT NULL,
+    tipo_mime text DEFAULT 'image/jpeg'::text NOT NULL,
+    bytes integer GENERATED ALWAYS AS (octet_length(foto)) STORED,
+    sha256 text NOT NULL,
+    creado_en timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT merma_evidencias_tamano CHECK (((octet_length(foto) >= 1) AND (octet_length(foto) <= 5242880))),
+    CONSTRAINT merma_evidencias_tipo_mime_check CHECK ((tipo_mime = ANY (ARRAY['image/jpeg'::text, 'image/png'::text, 'image/webp'::text])))
+);
+
+
+--
+-- Name: merma_evidencias_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.merma_evidencias_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: merma_evidencias_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.merma_evidencias_id_seq OWNED BY public.merma_evidencias.id;
+
+
+--
+-- Name: merma_reportes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.merma_reportes (
+    id integer NOT NULL,
+    tipo text NOT NULL,
+    motivo_id integer,
+    detalle text,
+    usuario_id integer,
+    autorizado_por text,
+    creado_en timestamp with time zone DEFAULT now() NOT NULL,
+    deshecho_en timestamp with time zone,
+    deshecho_por integer,
+    revisado_en timestamp with time zone,
+    revisado_por integer,
+    nota_revision text,
+    CONSTRAINT merma_reportes_tipo_check CHECK ((tipo = ANY (ARRAY['puntual'::text, 'incidente'::text, 'desarme'::text])))
+);
+
+
+--
+-- Name: merma_reportes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.merma_reportes_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: merma_reportes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.merma_reportes_id_seq OWNED BY public.merma_reportes.id;
+
+
+--
 -- Name: mermas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8637,6 +9452,8 @@ END) STORED,
     desarme_producto_id integer,
     desarme_cantidad integer,
     motivo_id integer,
+    reporte_id integer,
+    valor_autorizacion integer,
     CONSTRAINT mermas_cantidad_positiva CHECK ((cantidad > 0)),
     CONSTRAINT mermas_costo_cuadra CHECK ((costo_total = (costo_unitario * cantidad))),
     CONSTRAINT mermas_costo_no_negativo CHECK ((costo_unitario >= 0)),
@@ -9969,6 +10786,20 @@ ALTER TABLE ONLY public.compras ALTER COLUMN id SET DEFAULT nextval('public.comp
 
 
 --
+-- Name: conteo_lineas id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas ALTER COLUMN id SET DEFAULT nextval('public.conteo_lineas_id_seq'::regclass);
+
+
+--
+-- Name: conteos id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteos ALTER COLUMN id SET DEFAULT nextval('public.conteos_id_seq'::regclass);
+
+
+--
 -- Name: cotizacion_cuotas id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -10001,6 +10832,20 @@ ALTER TABLE ONLY public.cotizaciones ALTER COLUMN id SET DEFAULT nextval('public
 --
 
 ALTER TABLE ONLY public.lotes ALTER COLUMN id SET DEFAULT nextval('public.lotes_id_seq'::regclass);
+
+
+--
+-- Name: merma_evidencias id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_evidencias ALTER COLUMN id SET DEFAULT nextval('public.merma_evidencias_id_seq'::regclass);
+
+
+--
+-- Name: merma_reportes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_reportes ALTER COLUMN id SET DEFAULT nextval('public.merma_reportes_id_seq'::regclass);
 
 
 --
@@ -10175,6 +11020,22 @@ ALTER TABLE ONLY public.configuracion
 
 
 --
+-- Name: conteo_lineas conteo_lineas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas
+    ADD CONSTRAINT conteo_lineas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: conteos conteos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteos
+    ADD CONSTRAINT conteos_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: cotizacion_cuotas cotizacion_cuotas_cotizacion_id_numero_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10244,6 +11105,22 @@ ALTER TABLE ONLY public.lotes
 
 ALTER TABLE ONLY public.lotes
     ADD CONSTRAINT lotes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: merma_evidencias merma_evidencias_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_evidencias
+    ADD CONSTRAINT merma_evidencias_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: merma_reportes merma_reportes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_reportes
+    ADD CONSTRAINT merma_reportes_pkey PRIMARY KEY (id);
 
 
 --
@@ -10526,10 +11403,52 @@ CREATE INDEX ix_cod_aut_merma_usuario ON public.codigos_autorizacion_merma USING
 
 
 --
+-- Name: ix_conteo_lineas_conteo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_conteo_lineas_conteo ON public.conteo_lineas USING btree (conteo_id);
+
+
+--
+-- Name: ix_conteos_fecha; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_conteos_fecha ON public.conteos USING btree (creado_en DESC);
+
+
+--
+-- Name: ix_merma_evidencias_reporte; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_merma_evidencias_reporte ON public.merma_evidencias USING btree (reporte_id);
+
+
+--
+-- Name: ix_merma_evidencias_sha; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_merma_evidencias_sha ON public.merma_evidencias USING btree (sha256);
+
+
+--
+-- Name: ix_merma_reportes_pendientes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_merma_reportes_pendientes ON public.merma_reportes USING btree (creado_en DESC) WHERE ((revisado_en IS NULL) AND (deshecho_en IS NULL));
+
+
+--
 -- Name: ix_mermas_desarme_grupo; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX ix_mermas_desarme_grupo ON public.mermas USING btree (desarme_grupo) WHERE (desarme_grupo IS NOT NULL);
+
+
+--
+-- Name: ix_mermas_reporte; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_mermas_reporte ON public.mermas USING btree (reporte_id);
 
 
 --
@@ -10907,6 +11826,54 @@ ALTER TABLE ONLY public.configuracion
 
 
 --
+-- Name: conteo_lineas conteo_lineas_conteo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas
+    ADD CONSTRAINT conteo_lineas_conteo_id_fkey FOREIGN KEY (conteo_id) REFERENCES public.conteos(id);
+
+
+--
+-- Name: conteo_lineas conteo_lineas_lote_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas
+    ADD CONSTRAINT conteo_lineas_lote_id_fkey FOREIGN KEY (lote_id) REFERENCES public.lotes(id);
+
+
+--
+-- Name: conteo_lineas conteo_lineas_merma_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas
+    ADD CONSTRAINT conteo_lineas_merma_id_fkey FOREIGN KEY (merma_id) REFERENCES public.mermas(id);
+
+
+--
+-- Name: conteo_lineas conteo_lineas_partida_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas
+    ADD CONSTRAINT conteo_lineas_partida_id_fkey FOREIGN KEY (partida_id) REFERENCES public.partidas_mostrador(id);
+
+
+--
+-- Name: conteo_lineas conteo_lineas_producto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteo_lineas
+    ADD CONSTRAINT conteo_lineas_producto_id_fkey FOREIGN KEY (producto_id) REFERENCES public.productos(id);
+
+
+--
+-- Name: conteos conteos_usuario_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.conteos
+    ADD CONSTRAINT conteos_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id);
+
+
+--
 -- Name: cotizacion_cuotas cotizacion_cuotas_cotizacion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11043,6 +12010,46 @@ ALTER TABLE ONLY public.lotes
 
 
 --
+-- Name: merma_evidencias merma_evidencias_reporte_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_evidencias
+    ADD CONSTRAINT merma_evidencias_reporte_id_fkey FOREIGN KEY (reporte_id) REFERENCES public.merma_reportes(id);
+
+
+--
+-- Name: merma_reportes merma_reportes_deshecho_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_reportes
+    ADD CONSTRAINT merma_reportes_deshecho_por_fkey FOREIGN KEY (deshecho_por) REFERENCES public.usuarios(id);
+
+
+--
+-- Name: merma_reportes merma_reportes_motivo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_reportes
+    ADD CONSTRAINT merma_reportes_motivo_id_fkey FOREIGN KEY (motivo_id) REFERENCES public.motivos_merma(id);
+
+
+--
+-- Name: merma_reportes merma_reportes_revisado_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_reportes
+    ADD CONSTRAINT merma_reportes_revisado_por_fkey FOREIGN KEY (revisado_por) REFERENCES public.usuarios(id);
+
+
+--
+-- Name: merma_reportes merma_reportes_usuario_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merma_reportes
+    ADD CONSTRAINT merma_reportes_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id);
+
+
+--
 -- Name: mermas mermas_desarme_producto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11088,6 +12095,14 @@ ALTER TABLE ONLY public.mermas
 
 ALTER TABLE ONLY public.mermas
     ADD CONSTRAINT mermas_producto_id_fkey FOREIGN KEY (producto_id) REFERENCES public.productos(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: mermas mermas_reporte_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mermas
+    ADD CONSTRAINT mermas_reporte_id_fkey FOREIGN KEY (reporte_id) REFERENCES public.merma_reportes(id);
 
 
 --
@@ -11326,5 +12341,5 @@ ALTER TABLE ONLY public.ventas
 -- PostgreSQL database dump complete
 --
 
-\unrestrict OVLMEu6UIz8Sdj9yOWj3p3npjnA4xagnixgBoKQknlZ082vHM7MEyU08i6Gq9hj
+\unrestrict pAaPU9dhD2l61IgtN9qNj67zT5yGJjqnG9vlhj84wKXAZl7jXWLCYkg7WraVced
 
