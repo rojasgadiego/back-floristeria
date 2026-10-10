@@ -186,6 +186,7 @@ public class InventarioDAL
         p.Add("BajoMinimo", f.BajoMinimo ?? false);
         p.Add("ControlaLotes", f.ControlaLotes);
         p.Add("SoloEnVenta", f.SoloEnVenta ?? false);
+        p.Add("ConStock", f.ConStock ?? false);
         p.Add("Pagina", f.PaginaReal);
         p.Add("Tamano", f.TamanoReal);
 
@@ -194,7 +195,7 @@ public class InventarioDAL
         SELECT * FROM sp_inv_c_productos(
             @Buscar::text, @CategoriaId::int, @Tipo::tipo_producto,
             @Activo::boolean, @BajoMinimo::boolean, @ControlaLotes::boolean,
-            @SoloEnVenta::boolean, @Pagina::int, @Tamano::int)
+            @SoloEnVenta::boolean, @Pagina::int, @Tamano::int, @ConStock::boolean)
         """,
         p, ct);
     }

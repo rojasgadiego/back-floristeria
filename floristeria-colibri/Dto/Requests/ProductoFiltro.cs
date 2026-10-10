@@ -21,6 +21,9 @@ public class ProductoFiltro
     /// </summary>
     public bool? SoloEnVenta { get; set; }
 
+    /// <summary>Solo lo que tiene algo en bodega o en venta (sql/30).</summary>
+    public bool? ConStock { get; set; }
+
     // Nulables a propósito: con [AsParameters], un tipo de valor no nulable se
     // vuelve OBLIGATORIO en el query string aunque tenga inicializador, y el
     // request falla con 400 si el front no lo manda. El default se resuelve
