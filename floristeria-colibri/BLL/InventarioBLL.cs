@@ -21,45 +21,68 @@ public class InventarioBLL
 {
     private readonly InventarioDAL _dal;
 
-    /// <summary>Para firmar con su nombre las mermas de los faltantes del conteo.</summary>
-    private readonly AccesoDAL _acceso;
+    /// <summary>
+    /// Los faltantes del conteo son mermas: su firma (la admin, o el código
+    /// por correo) se verifica igual que en Mermas.
+    /// </summary>
+    private readonly MermasBLL _mermas;
 
-    public InventarioBLL(InventarioDAL dal, AccesoDAL acceso)
+    public InventarioBLL(InventarioDAL dal, MermasBLL mermas)
     {
         _dal = dal;
-        _acceso = acceso;
+        _mermas = mermas;
     }
 
     // ============================================================
     // Conteo de stock
     // ============================================================
 
+    public static bool UbicacionValida(string? u) => u is "bodega" or "vitrina";
+
     public async Task<IEnumerable<FilaConteo>> PlanillaConteo(
-        int? categoriaId, CancellationToken ct = default)
-        => await _dal.PlanillaConteo(categoriaId, ct);
+        string ubicacion, int? categoriaId, CancellationToken ct = default)
+        => await _dal.PlanillaConteo(ubicacion, categoriaId, ct);
 
     /// <summary>
-    /// Aplica lo contado. Lo hace una administradora: los faltantes se
-    /// registran como merma y quedan firmados con su nombre, igual que una
-    /// merma sobre el umbral que ella misma registra.
+    /// Aplica lo contado y devuelve el conteo con su detalle, como queda en
+    /// el historial. Quién puede contar dónde lo decide el endpoint.
     /// </summary>
-    public async Task<ResultadoOp<List<LineaConteoAplicada>>> AplicarConteo(
-        ConteoRequest r, int usuarioId, CancellationToken ct = default)
+    public async Task<ResultadoOp<ConteoDetalle>> AplicarConteo(
+        ConteoRequest r, int usuarioId, bool esAdmin, CancellationToken ct = default)
     {
-        if (usuarioId <= 0) return ResultadoOp<List<LineaConteoAplicada>>.Error("Sesión inválida.");
+        if (usuarioId <= 0) return ResultadoOp<ConteoDetalle>.Error("Sesión inválida.");
+        if (!UbicacionValida(r.Ubicacion))
+            return ResultadoOp<ConteoDetalle>.Error("Indica si el conteo es de bodega o de vitrina.");
         if (r.Items is null or { Count: 0 })
-            return ResultadoOp<List<LineaConteoAplicada>>.Error("No hay nada contado.");
+            return ResultadoOp<ConteoDetalle>.Error("No hay nada contado.");
         if (r.Items.Any(i => i.Contado < 0))
-            return ResultadoOp<List<LineaConteoAplicada>>.Error("Lo contado no puede ser negativo.");
+            return ResultadoOp<ConteoDetalle>.Error("Lo contado no puede ser negativo.");
 
-        // El mismo balde o producto dos veces haría que la segunda línea
-        // pise a la primera sin que nadie lo note.
-        if (r.Items.GroupBy(i => (i.ProductoId, i.LoteId)).Any(g => g.Count() > 1))
-            return ResultadoOp<List<LineaConteoAplicada>>.Error(
-                "Hay un producto o balde repetido en el conteo.");
+        // El mismo balde, partida o producto dos veces haría que la segunda
+        // línea pise a la primera sin que nadie lo note.
+        if (r.Items.GroupBy(i => (i.ProductoId, i.LoteId, i.PartidaId)).Any(g => g.Count() > 1))
+            return ResultadoOp<ConteoDetalle>.Error("Hay algo repetido en el conteo.");
 
-        var quien = await _acceso.ConsultarUsuario(usuarioId, ct);
-        return await _dal.AplicarConteo(r, usuarioId, quien?.Nombre ?? "Administración", ct);
+        var (firma, errorAuth) = await _mermas.VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
+        if (errorAuth is not null) return ResultadoOp<ConteoDetalle>.Error(errorAuth);
+
+        var res = await _dal.AplicarConteo(r, usuarioId, firma, ct);
+        if (!res.Ok) return ResultadoOp<ConteoDetalle>.Error(res.Mensaje);
+
+        var detalle = await DetalleConteo(res.Datos, ct);
+        return detalle is null
+            ? ResultadoOp<ConteoDetalle>.Error("El conteo se aplicó pero no se pudo leer.")
+            : ResultadoOp<ConteoDetalle>.Exito(detalle);
+    }
+
+    public async Task<IEnumerable<ConteoResumen>> Conteos(CancellationToken ct = default)
+        => await _dal.Conteos(ct);
+
+    public async Task<ConteoDetalle?> DetalleConteo(int id, CancellationToken ct = default)
+    {
+        var conteo = (await _dal.Conteos(ct)).FirstOrDefault(c => c.Id == id);
+        if (conteo is null) return null;
+        return new ConteoDetalle { Conteo = conteo, Lineas = (await _dal.LineasConteo(id, ct)).ToList() };
     }
 
     // ============================================================

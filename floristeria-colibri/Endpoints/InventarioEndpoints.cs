@@ -102,17 +102,29 @@ public class InventarioEndpoints : EndpointsBase
             .RequireAuthorization(Politicas.Inventario)
             .Produces<ResponseDto>(201).Produces(400).Produces(401);
 
+        // Contar puede cualquiera del equipo: la vendedora solo la vitrina.
+        // El historial lo ve la administración.
         inventario.MapGet("/conteo", PlanillaConteo)
             .WithName("PlanillaConteo")
-            .WithSummary("Lo que hay que contar en bodega: por producto, o por balde si tiene lotes")
-            .RequireAuthorization(Politicas.Admin)
-            .Produces<ResponseDto>(200);
+            .WithSummary("Lo que hay que contar en bodega o en la vitrina")
+            .Produces<ResponseDto>(200).Produces(400);
 
         inventario.MapPost("/conteo", AplicarConteo)
             .WithName("AplicarConteo")
-            .WithSummary("Ajusta el stock a lo contado. Los faltantes quedan como merma")
-            .RequireAuthorization(Politicas.Admin)
+            .WithSummary("Ajusta el stock a lo contado. Los faltantes quedan como merma. Queda en el historial")
             .Produces<ResponseDto>(200).Produces(400);
+
+        inventario.MapGet("/conteos", Conteos)
+            .WithName("HistorialConteos")
+            .WithSummary("Quién contó, cuándo, dónde y cuánto cambió")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200);
+
+        inventario.MapGet("/conteos/{id:int}", DetalleConteo)
+            .WithName("DetalleConteo")
+            .WithSummary("Un conteo con cada línea: sistema, contado y diferencia")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200).Produces(404);
 
         inventario.MapGet("/movimientos", Movimientos)
             .WithName("Movimientos")
@@ -193,9 +205,27 @@ public class InventarioEndpoints : EndpointsBase
 
     #region Escritura
 
+    /// <summary>
+    /// Bodega: bodega y admin. Vitrina: cualquiera del equipo. Null si puede;
+    /// si no, el porqué.
+    /// </summary>
+    private static string? PuedeContar(HttpContext http, string? ubicacion)
+    {
+        if (!InventarioBLL.UbicacionValida(ubicacion)) return "Indica si el conteo es de bodega o de vitrina.";
+        if (ubicacion == "bodega" && !http.User.IsInRole("admin") && !http.User.IsInRole("bodega"))
+            return "La bodega la cuenta bodega. Desde acá puedes contar la vitrina.";
+        return null;
+    }
+
     public async Task<ResponseDto> PlanillaConteo(
-        [FromQuery] int? categoriaId, InventarioBLL bll, CancellationToken ct)
-        => await Consultar(() => bll.PlanillaConteo(categoriaId, ct), "planilla de conteo");
+        [FromQuery] string? ubicacion, [FromQuery] int? categoriaId,
+        InventarioBLL bll, HttpContext http, CancellationToken ct)
+    {
+        var u = ubicacion ?? "bodega";
+        var no = PuedeContar(http, u);
+        if (no is not null) return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, no, null);
+        return await Consultar(() => bll.PlanillaConteo(u, categoriaId, ct), "planilla de conteo");
+    }
 
     public async Task<ResponseDto> AplicarConteo(
         [FromBody] ConteoRequest peticion, InventarioBLL bll, HttpContext http, CancellationToken ct)
@@ -205,15 +235,17 @@ public class InventarioEndpoints : EndpointsBase
             if (peticion is null)
                 return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, "Request inválido", null);
 
-            var r = await bll.AplicarConteo(peticion, UsuarioActual(http), ct);
+            var no = PuedeContar(http, peticion.Ubicacion);
+            if (no is not null) return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, no, null);
+
+            var r = await bll.AplicarConteo(peticion, UsuarioActual(http), http.User.IsInRole("admin"), ct);
             if (!r.Ok) return CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, r.Mensaje, null);
 
-            var cambios = r.Datos!.Count(l => l.Diferencia != 0);
-            var faltantes = r.Datos!.Count(l => l.Diferencia < 0);
-            var mensaje = cambios == 0
+            var c = r.Datos!.Conteo;
+            var mensaje = c.ConDiferencia == 0
                 ? "Conteo aplicado · todo cuadraba"
-                : $"Conteo aplicado · {cambios} ajuste(s)" +
-                  (faltantes > 0 ? $", {faltantes} faltante(s) registrado(s) como merma" : "");
+                : $"Conteo aplicado · {c.ConDiferencia} ajuste(s)" +
+                  (c.Faltantes > 0 ? $", {c.Faltantes} faltante(s) registrado(s) como merma" : "");
 
             return CustomUtilz.CreateResponse(HttpStatusCodes.Ok, mensaje, r.Datos);
         }
@@ -224,6 +256,12 @@ public class InventarioEndpoints : EndpointsBase
                 HttpStatusCodes.InternalServerError, $"Error al aplicar el conteo: {ex.Message}", null);
         }
     }
+
+    public async Task<ResponseDto> Conteos(InventarioBLL bll, CancellationToken ct)
+        => await Consultar(() => bll.Conteos(ct), "conteos");
+
+    public async Task<ResponseDto> DetalleConteo(int id, InventarioBLL bll, CancellationToken ct)
+        => await ConsultarUno(() => bll.DetalleConteo(id, ct), "Conteo", $"No existe el conteo {id}.");
 
     public async Task<ResponseDto> CrearProducto(
         [FromBody] CrearProductoRequest peticion, InventarioBLL bll, CancellationToken ct)

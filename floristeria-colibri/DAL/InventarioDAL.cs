@@ -37,39 +37,49 @@ public class InventarioDAL
     // ============================================================
 
     public async Task<IEnumerable<FilaConteo>> PlanillaConteo(
-        int? categoriaId, CancellationToken ct = default)
+        string ubicacion, int? categoriaId, CancellationToken ct = default)
         => await _db.ConsultarLista<FilaConteo>(
-            "SELECT * FROM sp_inv_c_conteo(@categoriaId::int)", new { categoriaId }, ct);
+            "SELECT * FROM sp_inv_c_conteo(@ubicacion::text, @categoriaId::int)",
+            new { ubicacion, categoriaId }, ct);
 
     /// <summary>
-    /// Todo o nada: si una línea falla, la función aborta y no se aplica
-    /// ninguna. `autorizadoPor` firma las mermas de los faltantes.
+    /// Todo o nada: si una línea falla, no se aplica ninguna. Devuelve el id
+    /// del conteo, que queda en el historial.
     /// </summary>
-    public async Task<ResultadoOp<List<LineaConteoAplicada>>> AplicarConteo(
+    public async Task<ResultadoOp<int>> AplicarConteo(
         ConteoRequest r, int usuarioId, string? autorizadoPor, CancellationToken ct = default)
     {
         try
         {
-            var filas = await _db.ConsultarLista<LineaConteoAplicada>(
+            var id = await _db.Escalar<int>(
                 """
-                SELECT * FROM sp_inv_i_conteo(
-                    @items::jsonb, @detalle::text, @usuarioId::int, @autorizadoPor::text)
+                SELECT sp_inv_i_conteo(
+                    @ubicacion::text, @items::jsonb, @detalle::text,
+                    @usuarioId::int, @autorizadoPor::text)
                 """,
                 new
                 {
+                    ubicacion = r.Ubicacion,
                     items = JsonSerializer.Serialize(r.Items, JsonCamelReceta),
                     detalle = r.Detalle,
                     usuarioId,
                     autorizadoPor
                 }, ct);
 
-            return ResultadoOp<List<LineaConteoAplicada>>.Exito(filas.ToList());
+            return ResultadoOp<int>.Exito(id);
         }
         catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
         {
-            return ResultadoOp<List<LineaConteoAplicada>>.Error(ErroresPg.Mensaje(ex));
+            return ResultadoOp<int>.Error(ErroresPg.Mensaje(ex));
         }
     }
+
+    public async Task<IEnumerable<ConteoResumen>> Conteos(CancellationToken ct = default)
+        => await _db.ConsultarLista<ConteoResumen>("SELECT * FROM sp_inv_c_conteos(200)", null, ct);
+
+    public async Task<IEnumerable<ConteoLinea>> LineasConteo(int conteoId, CancellationToken ct = default)
+        => await _db.ConsultarLista<ConteoLinea>(
+            "SELECT * FROM sp_inv_c_conteo_lineas(@conteoId)", new { conteoId }, ct);
 
     public async Task<IEnumerable<LineaReceta>> ConsultarReceta(
         int productoId, CancellationToken ct = default)
