@@ -1,3 +1,6 @@
+-- ⚠ HISTÓRICO: scripts posteriores reemplazaron funciones de este archivo.
+-- No volver a correrlo sobre una base existente. Ver 00_LEEME.md.
+
 -- =====================================================================
 -- Mermas: reversa consistente, desarme con firma, privacidad y umbral
 -- =====================================================================

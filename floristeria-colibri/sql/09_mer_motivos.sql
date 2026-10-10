@@ -1,3 +1,6 @@
+-- ⚠ HISTÓRICO: scripts posteriores reemplazaron funciones de este archivo.
+-- No volver a correrlo sobre una base existente. Ver 00_LEEME.md.
+
 -- =====================================================================
 -- Mermas: catálogo de motivos administrable, por categoría
 -- =====================================================================

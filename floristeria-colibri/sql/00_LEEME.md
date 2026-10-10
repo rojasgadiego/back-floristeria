@@ -60,3 +60,42 @@ WHERE t.typname = 'tipo_producto' ORDER BY enumsortorder;
 
 1. `01_inv_productos_consulta.sql`
 2. `02_inv_productos_escritura.sql`
+
+Desde ahí, en orden de número. **En producción están aplicados todos, hasta
+el `20`** (al 2026-10-10).
+
+## La fuente de verdad es `esquema_produccion.sql`
+
+La base nació de un dump y muchas funciones nunca tuvieron script acá
+(escaneo, desarme, reportes de mermas, ventas…). Además, varios scripts
+quedaron atrás porque uno posterior reemplazó sus funciones:
+
+| Script | Quedó atrás en | Lo reemplaza |
+|---|---|---|
+| `02` | `sp_inv_i_producto`, `sp_inv_u_producto` (sin precio de ramo) | `12` |
+| `08` | `sp_mer_i_merma`, `sp_mer_u_revertir` | `15`, `16`, `18`, `19`, `20` |
+| `09` | parcha `sp_mer_i_merma` y `sp_mer_i_desarme` en caliente | `15`, `16`, `18` |
+| `11` | `sp_ven_i_venta` de 12 argumentos | `13` |
+
+**No vuelvas a correr `02`, `08` ni `09` sobre una base existente**: crearían
+sobrecargas viejas o pisarían las versiones nuevas.
+
+`esquema_produccion.sql` es un `pg_dump --schema-only` de producción: tablas,
+funciones y triggers tal como están, sin datos. Para regenerarlo:
+
+```bash
+ssh root@187.127.55.127 'docker exec $(docker ps -qf name=colibriapp-database) \
+  pg_dump -U app_user -d app_colibridb --schema-only --no-owner --no-privileges' \
+  > esquema_produccion.sql
+```
+
+## Para cambiar una función que ya existe
+
+1. Saca la versión **vigente** de producción, no la del repo:
+   `SELECT pg_get_functiondef('sp_x'::regproc);`
+2. El script nuevo parte de esa copia y cambia solo lo necesario.
+3. Pruébalo en seco: `BEGIN; \i script.sql; …pruebas…; ROLLBACK;`
+4. Si cambia la firma, borra la versión vieja (`DROP FUNCTION … (tipos)`) y
+   deja los parámetros nuevos con default: así el backend que está corriendo
+   sigue funcionando hasta que se redespliegue. Primero el SQL, después el push.
+5. Regenera `esquema_produccion.sql`.
