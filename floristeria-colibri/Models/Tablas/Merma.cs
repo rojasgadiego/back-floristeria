@@ -249,6 +249,10 @@ public class ResultadoDesarme
     public int Mermas { get; set; }
     public int Recuperadas { get; set; }
     public int Perdidas { get; set; }
+
+    /// <summary>El reporte del desarme (sql/24): con fotos y "deshacer".</summary>
+    public int ReporteId { get; set; }
+    public bool FotoRepetida { get; set; }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -415,4 +419,26 @@ public class FotoEvidencia
     public string TipoMime { get; set; } = "image/jpeg";
     public int ReporteId { get; set; }
     public int? UsuarioId { get; set; }
+}
+
+/// <summary>Un reporte que nadie ha revisado (sp_mer_c_reportes_pendientes).</summary>
+public class ReportePendiente
+{
+    public int ReporteId { get; set; }
+    public string Tipo { get; set; } = string.Empty;
+    public string? Motivo { get; set; }
+    public string? Detalle { get; set; }
+    public string? Usuario { get; set; }
+    public DateTime CreadoEn { get; set; }
+    public string? AutorizadoPor { get; set; }
+
+    /// <summary>"2 × Rosa · 1 × Ramo…", armado por la base.</summary>
+    public string? Lineas { get; set; }
+
+    public int CostoPerdido { get; set; }
+    public int Fotos { get; set; }
+    public bool FotoRepetida { get; set; }
+
+    /// <summary>Líneas que tenían etiqueta y se tipearon a mano.</summary>
+    public int SinEscanear { get; set; }
 }

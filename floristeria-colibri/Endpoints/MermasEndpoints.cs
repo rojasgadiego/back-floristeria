@@ -100,16 +100,21 @@ public class MermasEndpoints : EndpointsBase
             .WithSummary("Solo quien lo registró, dentro de 10 minutos")
             .Produces<ResponseDto>(200).Produces(400);
 
+        mer.MapGet("/revision", Pendientes)
+            .WithName("MermasPorRevisar")
+            .WithSummary("Reportes que nadie ha revisado, con lo necesario para mirarlos")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200);
+
+        mer.MapPost("/reportes/{id:int}/revisado", MarcarRevisado)
+            .WithName("MarcarReporteRevisado")
+            .RequireAuthorization(Politicas.Admin)
+            .Produces<ResponseDto>(200).Produces(400);
+
         mer.MapGet("/reportes/{id:int}/evidencias", EvidenciasReporte)
             .WithName("EvidenciasReporteMerma")
             .WithSummary("Las fotos del reporte, sin los bytes. De quien lo registró y de la administración.")
             .Produces<ResponseDto>(200).Produces(404);
-
-        mer.MapPost("/lote/{loteId:int}/descartar", DescartarLote)
-            .WithName("DescartarLote")
-            .WithSummary("Da de baja el lote con lo que le quede. Es el destino de los rezagados.")
-            .RequireAuthorization(Politicas.Inventario)
-            .Produces<ResponseDto>(201).Produces(400);
 
         // ═══ Con id ═══
 
@@ -284,19 +289,34 @@ public class MermasEndpoints : EndpointsBase
             m => m.Activo ? $"Motivo \"{m.Motivo}\" guardado" : $"Motivo \"{m.Motivo}\" apagado",
             HttpStatusCodes.Ok, "guardar el motivo");
 
-    public async Task<ResponseDto> DescartarLote(
-        int loteId, [FromBody] DescartarLoteRequest peticion, MermasBLL bll,
+    public async Task<ResponseDto> Pendientes(MermasBLL bll, CancellationToken ct)
+        => await Consultar(() => bll.Pendientes(ct), "reportes por revisar");
+
+    public async Task<ResponseDto> MarcarRevisado(
+        int id, [FromBody] RevisarReporteRequest? peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.DescartarLote(loteId, peticion, UsuarioActual(http), EsAdmin(http), ct),
-            m => $"Lote {m.OrigenCodigo} dado de baja · {m.Cantidad} varas",
-            HttpStatusCodes.Created, "descartar el lote");
+    {
+        try
+        {
+            var error = await bll.MarcarRevisado(id, UsuarioActual(http), peticion?.Nota, ct);
+            return string.IsNullOrEmpty(error)
+                ? CustomUtilz.CreateResponse(HttpStatusCodes.Ok, "Reporte revisado", null)
+                : CustomUtilz.CreateResponse(HttpStatusCodes.BadRequest, error, null);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error al marcar revisado el reporte {Id}", id);
+            return CustomUtilz.CreateResponse(
+                HttpStatusCodes.InternalServerError, "Error al marcar como revisado.", null);
+        }
+    }
 
     public async Task<ResponseDto> Desarmar(
         int productoId, [FromBody] DesarmeRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
         => await Escribir(() => bll.Desarmar(productoId, peticion, UsuarioActual(http), EsAdmin(http), ct),
-            r => $"{r.Desarmados} × {r.Producto} desarmados · " +
-                 $"{r.Recuperadas} varas recuperadas, {r.Perdidas} perdidas",
+            r => $"{r.Desarmados} desarmado(s) · {r.Recuperadas} recuperadas, {r.Perdidas} perdidas · " +
+                 "lo puedes deshacer durante 10 minutos",
             HttpStatusCodes.Created, "desarmar");
 
     #endregion

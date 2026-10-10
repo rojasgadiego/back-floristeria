@@ -257,31 +257,6 @@ public sealed class AvisosCorreo
     // ============================================================
     // Mermas
     // ============================================================
-
-    /// <summary>Solo avisa las que tuvo que firmar un admin: las que pasan el umbral.</summary>
-    public void MermaRegistrada(int mermaId) => _cola.Encolar("merma", async (sp, ct) =>
-    {
-        if (Internos.Length == 0) return [];
-
-        var m = await sp.GetRequiredService<MermasDAL>().ConsultarUna(mermaId, null, ct);
-        if (m is null || string.IsNullOrWhiteSpace(m.AutorizadoPor)) return [];
-
-        return [new MensajeCorreo(Internos,
-            $"Merma sobre el umbral: {m.Cantidad} × {m.Producto} · {Pesos(m.CostoPerdido)}",
-            Pagina("Merma autorizada",
-                Destacado($"{H(m.AutorizadoPor)} autorizó una merma de <b>{Pesos(m.CostoPerdido)}</b>.") +
-                Datos(
-                    ("Producto", H(m.Producto)),
-                    ("Cantidad", m.Cantidad.ToString()),
-                    ("Origen", H($"{m.Origen} {m.OrigenCodigo}".Trim())),
-                    ("Motivo", H(m.Motivo)),
-                    ("Detalle", H(m.Detalle ?? "—")),
-                    ("Registró", H(m.Usuario)),
-                    ("Fecha", Fecha(m.CreadoEn)),
-                    ("Escaneada", m.Escaneado ? "Sí" : "No, se tipeó a mano")),
-                PieInterno))];
-    });
-
     /// <summary>
     /// Un reporte sobre el umbral: un solo correo con todas sus líneas, no
     /// uno por cada cosa que cayó en el temblor. Las fotos quedan en la app.

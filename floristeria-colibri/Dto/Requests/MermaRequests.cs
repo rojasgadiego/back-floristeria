@@ -74,20 +74,6 @@ public class FotoEvidenciaRequest
     public string TipoMime { get; set; } = "image/jpeg";
 }
 
-public class DescartarLoteRequest
-{
-    public string Motivo { get; set; } = string.Empty;
-    public string? Detalle { get; set; }
-
-    /// <summary>
-    /// El proveedor lo abona: sale del stock pero no es costo. Marcarlo mal
-    /// infla la merma del mes y hace ver mal a quien compró bien.
-    /// </summary>
-    public bool EsDevolucionProveedor { get; set; }
-
-    public AutorizacionCodigoRequest? Autorizacion { get; set; }
-}
-
 /// <summary>Crear o editar un motivo del catálogo. Solo administración.</summary>
 public class MotivoMermaRequest
 {
@@ -113,6 +99,9 @@ public class DesarmeRequest
     /// lo que dice la receta: cada vara tiene que tener un destino.
     /// </summary>
     public List<LineaDesarmeRequest> Lineas { get; set; } = [];
+
+    /// <summary>De 1 a 3 fotos del ramo. Sin evidencia no se desarma.</summary>
+    public List<FotoEvidenciaRequest> Fotos { get; set; } = [];
 
     /// <summary>
     /// Código de autorización cuando lo que sale supera el umbral. Es la misma
@@ -160,4 +149,10 @@ public class MermaFiltro
         Buscar = string.IsNullOrWhiteSpace(Buscar) ? null : Buscar.Trim();
         Motivo = string.IsNullOrWhiteSpace(Motivo) ? null : Motivo.Trim();
     }
+}
+
+public class RevisarReporteRequest
+{
+    /// <summary>Opcional: lo que vio quien revisó ("ok", "pedir explicación a…").</summary>
+    public string? Nota { get; set; }
 }

@@ -182,29 +182,6 @@ public class MermasBLL
     // Escritura
     // ============================================================
 
-    public async Task<ResultadoOp<Merma>> DescartarLote(
-        int loteId, DescartarLoteRequest r, int usuarioId, bool esAdmin = false,
-        CancellationToken ct = default)
-    {
-        if (loteId <= 0) return ResultadoOp<Merma>.Error("Indica el lote.");
-
-        if (string.IsNullOrWhiteSpace(r.Motivo))
-            return ResultadoOp<Merma>.Error("Indica por qué se descarta el lote.");
-
-        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
-        if (errorAuth is not null) return ResultadoOp<Merma>.Error(errorAuth);
-
-        var (id, error) = await _dal.DescartarLote(loteId, r, autorizadoPor, usuarioId, ct);
-        if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
-
-        if (autorizadoPor is not null && !esAdmin) _avisos.MermaRegistrada(id);
-
-        var merma = await _dal.ConsultarUna(id, null, ct);
-        return merma is null
-            ? ResultadoOp<Merma>.Error("El lote se descartó pero no se pudo leer la merma.")
-            : ResultadoOp<Merma>.Exito(merma);
-    }
-
     /// <summary>
     /// Pide el código de autorización: lo genera, lo guarda ligado a quien lo
     /// pide y lo manda por correo a la administración, que se lo dicta.
@@ -238,7 +215,7 @@ public class MermasBLL
     /// teléfono del vendedor; además el mensaje de error confirmaba si una
     /// clave ajena era correcta.
     /// </summary>
-    private async Task<(string? Firma, string? Error)> VerificarAutorizacion(
+    public async Task<(string? Firma, string? Error)> VerificarAutorizacion(
         AutorizacionCodigoRequest? aut, int usuarioId, bool esAdmin, CancellationToken ct)
     {
         if (esAdmin)
@@ -393,12 +370,31 @@ public class MermasBLL
         if (r.Lineas.Any(l => l.Recuperadas < 0 || l.Perdidas < 0))
             return ResultadoOp<ResultadoDesarme>.Error("Las cantidades no pueden ser negativas.");
 
+        var errorFotos = ValidarFotos(r.Fotos);
+        if (errorFotos is not null) return ResultadoOp<ResultadoDesarme>.Error(errorFotos);
+
         var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
         if (errorAuth is not null) return ResultadoOp<ResultadoDesarme>.Error(errorAuth);
 
         // Que la suma cuadre con la receta lo valida el SP: es él quien sabe
         // cuántas varas lleva cada unidad, y su mensaje nombra el componente
         // que no calza. También exige la firma si el desarme supera el umbral.
-        return await _dal.Desarmar(productoId, r, autorizadoPor, usuarioId, ct);
+        var res = await _dal.Desarmar(productoId, r, autorizadoPor, usuarioId, ct);
+
+        if (res.Ok && autorizadoPor is not null && !esAdmin)
+            _avisos.ReporteMermaRegistrado(res.Datos!.ReporteId);
+
+        return res;
     }
+
+    // ============================================================
+    // Revisión
+    // ============================================================
+
+    public async Task<IEnumerable<ReportePendiente>> Pendientes(CancellationToken ct = default)
+        => await _dal.Pendientes(ct);
+
+    public async Task<string> MarcarRevisado(
+        int reporteId, int usuarioId, string? nota, CancellationToken ct = default)
+        => reporteId <= 0 ? "Indica el reporte." : await _dal.MarcarRevisado(reporteId, usuarioId, nota, ct);
 }

@@ -227,32 +227,6 @@ public class MermasDAL
     // Escritura
     // ============================================================
 
-    public async Task<(int Id, string Error)> DescartarLote(
-        int loteId, DescartarLoteRequest r, string? autorizadoPor, int usuarioId,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            var id = await _db.Escalar<int>(
-                """
-                SELECT sp_mer_i_descarte_lote(
-                    @loteId::int, @Motivo::text, @Detalle::text,
-                    @EsDevolucionProveedor::boolean, @autorizadoPor::text, @usuarioId::int)
-                """,
-                new
-                {
-                    loteId, r.Motivo, r.Detalle, r.EsDevolucionProveedor,
-                    autorizadoPor, usuarioId
-                }, ct);
-
-            return (id, string.Empty);
-        }
-        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
-        {
-            return (0, ErroresPg.Mensaje(ex));
-        }
-    }
-
     // ============================================================
     // Desarme
     // ============================================================
@@ -275,6 +249,7 @@ public class MermasDAL
             p.Add("Motivo", r.Motivo);
             p.Add("Detalle", r.Detalle);
             p.Add("Lineas", JsonSerializer.Serialize(r.Lineas, JsonCamel));
+            p.Add("Fotos", JsonSerializer.Serialize(r.Fotos, JsonCamel));
             p.Add("UsuarioId", usuarioId);
             p.Add("AutorizadoPor", autorizadoPor);
 
@@ -284,16 +259,18 @@ public class MermasDAL
             // sin ningún error.
             var res = await _db.ConsultarUno<ResultadoDesarme>(
                 """
-                SELECT o_producto_id AS producto_id,
-                       o_producto    AS producto,
-                       o_desarmados  AS desarmados,
-                       o_mermas      AS mermas,
-                       o_recuperadas AS recuperadas,
-                       o_perdidas    AS perdidas
-                FROM sp_mer_i_desarme(
-                    @ProductoId::int, @Cantidad::int, @Motivo::text,
-                    @Detalle::text, @Lineas::jsonb, @UsuarioId::int,
-                    @AutorizadoPor::text)
+                SELECT x.reporte_id, x.mermas, x.recuperadas, x.perdidas, x.foto_repetida,
+                       @ProductoId AS producto_id, @Cantidad AS desarmados
+                  FROM sp_mer_i_reporte_desarme(
+                    @ProductoId::int, @Cantidad::int, @Motivo::text, @Detalle::text,
+                    @Lineas::jsonb,
+                    ARRAY(SELECT decode(f.v->>'base64', 'base64')
+                            FROM jsonb_array_elements(@Fotos::jsonb) WITH ORDINALITY AS f(v, n)
+                           ORDER BY f.n),
+                    ARRAY(SELECT f.v->>'tipoMime'
+                            FROM jsonb_array_elements(@Fotos::jsonb) WITH ORDINALITY AS f(v, n)
+                           ORDER BY f.n),
+                    @AutorizadoPor::text, @UsuarioId::int) x
                 """,
                 p, ct);
 
@@ -395,4 +372,28 @@ public class MermasDAL
              WHERE reporte_id = @reporteId
             """,
             new { reporteId }, ct);
+
+    // ============================================================
+    // Revisión (sql/24)
+    // ============================================================
+
+    public async Task<IEnumerable<ReportePendiente>> Pendientes(CancellationToken ct = default)
+        => await _db.ConsultarLista<ReportePendiente>(
+            "SELECT * FROM sp_mer_c_reportes_pendientes(100)", null, ct);
+
+    public async Task<string> MarcarRevisado(
+        int reporteId, int usuarioId, string? nota, CancellationToken ct = default)
+    {
+        try
+        {
+            await _db.Escalar<int>(
+                "SELECT sp_mer_u_reporte_revisado(@reporteId, @usuarioId, @nota)",
+                new { reporteId, usuarioId, nota }, ct);
+            return string.Empty;
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ErroresPg.Mensaje(ex);
+        }
+    }
 }
