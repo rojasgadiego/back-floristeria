@@ -74,7 +74,7 @@ public class InventarioBLL
     {
         if (string.IsNullOrWhiteSpace(r.Codigo)) return ResultadoOp<Producto>.Error("Debe indicar el código del producto.");
         if (string.IsNullOrWhiteSpace(r.Nombre)) return ResultadoOp<Producto>.Error("Debe indicar el nombre del producto.");
-        if (r.Precio <= 0) return ResultadoOp<Producto>.Error("El precio debe ser mayor a 0.");
+        if (r.Precio < 0) return ResultadoOp<Producto>.Error("El precio no puede ser negativo.");
         if (r.Costo < 0) return ResultadoOp<Producto>.Error("El costo no puede ser negativo.");
         if (r.Minimo < 0) return ResultadoOp<Producto>.Error("El mínimo no puede ser negativo.");
 
@@ -94,7 +94,7 @@ public class InventarioBLL
     {
         if (id <= 0) return ResultadoOp<Producto>.Error("El ID debe ser mayor a 0.");
         if (string.IsNullOrWhiteSpace(r.Nombre)) return ResultadoOp<Producto>.Error("Debe indicar el nombre del producto.");
-        if (r.Precio <= 0) return ResultadoOp<Producto>.Error("El precio debe ser mayor a 0.");
+        if (r.Precio < 0) return ResultadoOp<Producto>.Error("El precio no puede ser negativo.");
 
         var error = await _dal.ActualizarProducto(id, r, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Producto>.Error(error);
