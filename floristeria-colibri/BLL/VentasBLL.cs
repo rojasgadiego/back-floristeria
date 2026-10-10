@@ -50,6 +50,21 @@ public class VentasBLL
         if (r.DescuentoManual < 0)
             return ResultadoOp<VentaDetalle>.Error("El descuento no puede ser negativo.");
 
+        // ─── El despacho ───
+        // Sin a quién entregar ni cómo ubicarlo, el repartidor vuelve con el
+        // ramo. El valor puede ser 0: despacho gratis.
+        if (r.EsDespacho)
+        {
+            if (string.IsNullOrWhiteSpace(r.DespachoRecibe))
+                return ResultadoOp<VentaDetalle>.Error("Indica quién recibe el despacho.");
+            if (string.IsNullOrWhiteSpace(r.DespachoTelefono))
+                return ResultadoOp<VentaDetalle>.Error("Indica el teléfono de quien recibe.");
+            if (string.IsNullOrWhiteSpace(r.DireccionDespacho))
+                return ResultadoOp<VentaDetalle>.Error("Indica la dirección de entrega.");
+            if (r.DespachoValor < 0)
+                return ResultadoOp<VentaDetalle>.Error("El valor del despacho no puede ser negativo.");
+        }
+
         // ─── La autorización ───
         //
         // El vendedor solicita un código que se envía por correo al admin.

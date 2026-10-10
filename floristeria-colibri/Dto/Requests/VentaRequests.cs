@@ -34,6 +34,18 @@ public class RegistrarVentaRequest
 
     /// <summary>Dirección de entrega cuando EsDespacho es true.</summary>
     public string? DireccionDespacho { get; set; }
+
+    /// <summary>Nombre de quien recibe el despacho.</summary>
+    public string? DespachoRecibe { get; set; }
+
+    /// <summary>Teléfono de quien recibe, para coordinar la entrega.</summary>
+    public string? DespachoTelefono { get; set; }
+
+    /// <summary>
+    /// Lo que se cobra por despachar, IVA incluido. Entra a la boleta como
+    /// línea de servicio "Despacho". 0 = gratis.
+    /// </summary>
+    public int DespachoValor { get; set; }
 }
 
 public class VentaLineaRequest

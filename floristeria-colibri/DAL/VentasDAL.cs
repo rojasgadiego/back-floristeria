@@ -62,6 +62,9 @@ public class VentasDAL
             p.Add("CotizacionId", r.CotizacionId);
             p.Add("EsDespacho", r.EsDespacho);
             p.Add("DirDespacho", r.DireccionDespacho);
+            p.Add("DespachoRecibe", r.DespachoRecibe);
+            p.Add("DespachoTelefono", r.DespachoTelefono);
+            p.Add("DespachoValor", r.DespachoValor);
 
             var id = await _db.Escalar<int>(
                 """
@@ -69,7 +72,8 @@ public class VentasDAL
                     @Items::jsonb, @MedioPago::medio_pago, @UsuarioId::int,
                     @ClienteId::int, @PromocionId::int, @DescuentoManual::int,
                     @PuntosCanjeados::int, @Recibido::int, @AutorizadoPor::text,
-                    @CotizacionId::int, @EsDespacho::boolean, @DirDespacho::text)
+                    @CotizacionId::int, @EsDespacho::boolean, @DirDespacho::text,
+                    @DespachoRecibe::text, @DespachoTelefono::text, @DespachoValor::int)
                 """,
                 p, ct);
 
