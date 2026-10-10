@@ -64,6 +64,11 @@ public class MermasEndpoints : EndpointsBase
             .WithSummary("Desde cuánto hace falta autorización")
             .Produces<ResponseDto>(200);
 
+        mer.MapPost("/solicitar-codigo", SolicitarCodigo)
+            .WithName("SolicitarCodigoMerma")
+            .WithSummary("Manda a la administración un código para autorizar una merma sobre el umbral")
+            .Produces<ResponseDto>(200).Produces(400);
+
         mer.MapGet("/patrones", Patrones)
             .WithName("PatronesMerma")
             .WithSummary("Quién merma sin escanear, a qué hora, y las registradas a mano")
@@ -111,6 +116,9 @@ public class MermasEndpoints : EndpointsBase
     /// </summary>
     private static int? SoloDe(HttpContext http)
         => http.User.IsInRole("admin") ? null : UsuarioActual(http);
+
+    /// <summary>Una admin no pide código de autorización: es quien lo dictaría.</summary>
+    private static bool EsAdmin(HttpContext http) => http.User.IsInRole("admin");
 
     /// <summary>El vendedor merma solo desde el mostrador.</summary>
     private static bool SoloMostrador(HttpContext http)
@@ -199,11 +207,18 @@ public class MermasEndpoints : EndpointsBase
     public async Task<ResponseDto> Registrar(
         [FromBody] RegistrarMermaRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.Registrar(peticion, UsuarioActual(http), SoloMostrador(http), ct),
+        => await Escribir(() => bll.Registrar(peticion, UsuarioActual(http), SoloMostrador(http), EsAdmin(http), ct),
             m => m.CantidadRecuperada > 0
                 ? $"{m.Cantidad} de {m.Producto} · {m.CantidadRecuperada} recuperadas en {m.LoteRecuperacion}"
                 : $"{m.Cantidad} de {m.Producto} · ${m.CostoPerdido:N0} de pérdida",
             HttpStatusCodes.Created, "registrar la merma");
+
+    public async Task<ResponseDto> SolicitarCodigo(
+        [FromBody] SolicitarCodigoMermaRequest peticion, MermasBLL bll,
+        HttpContext http, CancellationToken ct)
+        => await Escribir(() => bll.SolicitarCodigo(peticion?.Valor ?? 0, UsuarioActual(http), ct),
+            mensaje => mensaje,
+            HttpStatusCodes.Ok, "pedir el código");
 
     public async Task<ResponseDto> CrearMotivo(
         [FromBody] MotivoMermaRequest peticion, MermasBLL bll, CancellationToken ct)
@@ -220,7 +235,7 @@ public class MermasEndpoints : EndpointsBase
     public async Task<ResponseDto> DescartarLote(
         int loteId, [FromBody] DescartarLoteRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.DescartarLote(loteId, peticion, UsuarioActual(http), ct),
+        => await Escribir(() => bll.DescartarLote(loteId, peticion, UsuarioActual(http), EsAdmin(http), ct),
             m => $"Lote {m.OrigenCodigo} dado de baja · {m.Cantidad} varas",
             HttpStatusCodes.Created, "descartar el lote");
 
@@ -236,7 +251,7 @@ public class MermasEndpoints : EndpointsBase
     public async Task<ResponseDto> Desarmar(
         int productoId, [FromBody] DesarmeRequest peticion, MermasBLL bll,
         HttpContext http, CancellationToken ct)
-        => await Escribir(() => bll.Desarmar(productoId, peticion, UsuarioActual(http), ct),
+        => await Escribir(() => bll.Desarmar(productoId, peticion, UsuarioActual(http), EsAdmin(http), ct),
             r => $"{r.Desarmados} × {r.Producto} desarmados · " +
                  $"{r.Recuperadas} varas recuperadas, {r.Perdidas} perdidas",
             HttpStatusCodes.Created, "desarmar");

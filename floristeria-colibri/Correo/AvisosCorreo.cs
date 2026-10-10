@@ -70,6 +70,31 @@ public sealed class AvisosCorreo
             return Task.FromResult<IEnumerable<MensajeCorreo>>([mensaje]);
         });
 
+    /// <summary>
+    /// El código para una merma sobre el umbral. Dice quién lo pide y cuánto
+    /// vale: quien lo dicta tiene que saber qué está aprobando.
+    /// </summary>
+    public void CodigoMermaSolicitado(string codigo, int valor, string solicitante)
+        => _cola.Encolar("codigo-merma", (sp, ct) =>
+        {
+            if (Internos.Length == 0) return Task.FromResult<IEnumerable<MensajeCorreo>>([]);
+
+            var fmt = new System.Globalization.CultureInfo("es-CL");
+
+            var mensaje = new MensajeCorreo(Internos,
+                $"Código de autorización de merma: {codigo}",
+                Pagina("Autorización de merma",
+                    Destacado($"Código: <b style=\"font-size:2rem;letter-spacing:.2em\">{codigo}</b>") +
+                    Datos(
+                        ("Lo pide", H(solicitante)),
+                        ("Valor estimado", valor.ToString("C0", fmt)),
+                        ("Válido por", "10 minutos")) +
+                    Parrafo("Sirve solo en la sesión de quien lo pidió. Díctaselo si apruebas la merma; si no reconoces la solicitud, ignora este correo."),
+                    PieInterno));
+
+            return Task.FromResult<IEnumerable<MensajeCorreo>>([mensaje]);
+        });
+
     public void VentaRegistrada(int ventaId) => _cola.Encolar("venta", async (sp, ct) =>
     {
         var ticket = await sp.GetRequiredService<VentasBLL>().Ticket(ventaId, ct);

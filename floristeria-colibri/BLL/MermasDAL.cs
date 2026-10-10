@@ -132,6 +132,36 @@ public class MermasDAL
         => await _db.Escalar<int>("SELECT fn_mer_umbral_autorizacion()", null, ct);
 
     // ============================================================
+    // Códigos de autorización (sql/17)
+    // ============================================================
+
+    public async Task GuardarCodigo(
+        string codigo, int valor, int usuarioId, CancellationToken ct = default)
+        => await _db.Ejecutar(
+            """
+            INSERT INTO codigos_autorizacion_merma (codigo, valor, usuario_id)
+            VALUES (@codigo, @valor, @usuarioId)
+            """,
+            new { codigo, valor, usuarioId }, ct);
+
+    /// <summary>
+    /// Consume el código si es de esta persona, no se usó y no venció.
+    /// True si sirvió.
+    /// </summary>
+    public async Task<bool> UsarCodigo(
+        string codigo, int usuarioId, CancellationToken ct = default)
+        => await _db.Ejecutar(
+            """
+            UPDATE codigos_autorizacion_merma
+               SET usado = true
+             WHERE codigo = @codigo
+               AND usuario_id = @usuarioId
+               AND NOT usado
+               AND expira_en > now()
+            """,
+            new { codigo, usuarioId }, ct) > 0;
+
+    // ============================================================
     // Resumen
     // ============================================================
 

@@ -20,6 +20,7 @@ public class AccesoBLL
     private readonly AccesoDAL _dal;
     private readonly IJwtTokenService _jwt;
     private readonly ILogger<AccesoBLL> _log;
+    private readonly LimiteIntentos _limite;
 
     /// <summary>
     /// Hash de descarte para cuando el correo no existe. Ver Login().
@@ -27,11 +28,12 @@ public class AccesoBLL
     private static readonly string HashSenuelo =
         BCrypt.Net.BCrypt.HashPassword("señuelo", PasswordHasher.WorkFactor);
 
-    public AccesoBLL(AccesoDAL dal, IJwtTokenService jwt, ILogger<AccesoBLL> log)
+    public AccesoBLL(AccesoDAL dal, IJwtTokenService jwt, ILogger<AccesoBLL> log, LimiteIntentos limite)
     {
         _dal = dal;
         _jwt = jwt;
         _log = log;
+        _limite = limite;
     }
 
     // ============================================================
@@ -45,6 +47,12 @@ public class AccesoBLL
         if (string.IsNullOrWhiteSpace(r.Email) || string.IsNullOrWhiteSpace(r.Password))
             return ResultadoOp<LoginResponse>.Error("Debe indicar correo y contraseña.");
 
+        // Por correo y no por IP (ver LimiteIntentos). Se cuenta también el
+        // correo inexistente: si no, el bloqueo delataría cuáles existen.
+        var clave = "login:" + r.Email.Trim().ToLowerInvariant();
+        if (_limite.Bloqueado(clave) is { } resta)
+            return ResultadoOp<LoginResponse>.Error(LimiteIntentos.Mensaje(resta));
+
         var u = await _dal.BuscarParaLogin(r.Email.Trim(), ct);
 
         // Si el correo no existe igual se verifica contra un hash de descarte.
@@ -54,17 +62,21 @@ public class AccesoBLL
         if (u is null)
         {
             PasswordHasher.Verificar(r.Password, HashSenuelo);
+            _limite.Fallo(clave);
             return ResultadoOp<LoginResponse>.Error("Correo o contraseña incorrectos.");
         }
 
         if (!PasswordHasher.Verificar(r.Password, u.PasswordHash))
         {
             _log.LogWarning("Login fallido para {Email}", u.Email);
+            _limite.Fallo(clave);
 
             // Mismo mensaje que arriba, a propósito: decir "la clave está mala"
             // ya confirma que ese correo existe.
             return ResultadoOp<LoginResponse>.Error("Correo o contraseña incorrectos.");
         }
+
+        _limite.Exito(clave);
 
         // Recién acá, con la contraseña ya verificada, se puede decir la verdad:
         // es su cuenta y merece saber por qué no entra.
@@ -139,8 +151,18 @@ public class AccesoBLL
 
         // Exigir la actual es lo que impide que una sesión abierta en un
         // computador prestado alcance para secuestrar la cuenta.
+        // Con una sesión abierta ajena se podría probar la clave actual sin
+        // freno y, al acertar, quedarse con la cuenta.
+        var clave = "password:" + id;
+        if (_limite.Bloqueado(clave) is { } resta) return LimiteIntentos.Mensaje(resta);
+
         if (!PasswordHasher.Verificar(r.PasswordActual, u.PasswordHash))
+        {
+            _limite.Fallo(clave);
             return "La contraseña actual no es correcta.";
+        }
+
+        _limite.Exito(clave);
 
         if (PasswordHasher.Verificar(r.PasswordNueva, u.PasswordHash))
             return "La contraseña nueva debe ser distinta de la actual.";

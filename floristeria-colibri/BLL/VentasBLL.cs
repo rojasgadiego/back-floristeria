@@ -16,13 +16,17 @@ public class VentasBLL
     private readonly AccesoDAL _acceso;
     private readonly AvisosCorreo _avisos;
     private readonly ILogger<VentasBLL> _log;
+    private readonly LimiteIntentos _limite;
 
-    public VentasBLL(VentasDAL dal, AccesoDAL acceso, AvisosCorreo avisos, ILogger<VentasBLL> log)
+    public VentasBLL(
+        VentasDAL dal, AccesoDAL acceso, AvisosCorreo avisos, ILogger<VentasBLL> log,
+        LimiteIntentos limite)
     {
         _dal = dal;
         _acceso = acceso;
         _avisos = avisos;
         _log = log;
+        _limite = limite;
     }
 
     // ============================================================
@@ -74,16 +78,24 @@ public class VentasBLL
 
         if (r.Autorizacion is { } aut && !string.IsNullOrWhiteSpace(aut.Codigo))
         {
+            // Sin límite, un código de 6 dígitos se adivinaba probando. Y
+            // solo sirve en la sesión de quien lo pidió.
+            var clave = "codigo-descuento:" + usuarioId;
+            if (_limite.Bloqueado(clave) is { } resta)
+                return ResultadoOp<VentaDetalle>.Error(LimiteIntentos.Mensaje(resta));
+
             var valido = await _dal.ValidarYUsarCodigoDescuento(
-                aut.Codigo.Trim().ToUpperInvariant(), r.DescuentoManual, ct);
+                aut.Codigo.Trim().ToUpperInvariant(), r.DescuentoManual, usuarioId, ct);
 
             if (!valido)
             {
-                _log.LogWarning("Código de descuento inválido o expirado: {Codigo}", aut.Codigo);
+                _limite.Fallo(clave);
+                _log.LogWarning("Código de descuento inválido o expirado del usuario {Usuario}", usuarioId);
                 return ResultadoOp<VentaDetalle>.Error(
                     "El código es incorrecto, ya fue usado o expiró. Solicita uno nuevo.");
             }
 
+            _limite.Exito(clave);
             autorizadoPor = "Código autorizado";
         }
 

@@ -47,10 +47,10 @@ public class RegistrarMermaRequest
     public bool Escaneado { get; set; }
 
     /// <summary>
-    /// Correo y clave de quien autoriza cuando el monto supera el umbral. Se
-    /// verifican contra la base: no alcanza con que la pantalla lo diga.
+    /// Código que la administración recibió por correo, cuando el monto supera
+    /// el umbral. Solo sirve en la sesión de quien lo pidió (sql/17).
     /// </summary>
-    public AutorizacionRequest? Autorizacion { get; set; }
+    public AutorizacionCodigoRequest? Autorizacion { get; set; }
 }
 
 public class DescartarLoteRequest
@@ -64,7 +64,7 @@ public class DescartarLoteRequest
     /// </summary>
     public bool EsDevolucionProveedor { get; set; }
 
-    public AutorizacionRequest? Autorizacion { get; set; }
+    public AutorizacionCodigoRequest? Autorizacion { get; set; }
 }
 
 /// <summary>Crear o editar un motivo del catálogo. Solo administración.</summary>
@@ -99,11 +99,11 @@ public class DesarmeRequest
     public List<LineaDesarmeRequest> Lineas { get; set; } = [];
 
     /// <summary>
-    /// Firma de una administradora cuando lo que sale supera el umbral. Es la
-    /// misma regla que una merma suelta: sin ella, desarmar era la forma de
-    /// mermar caro sin pedir permiso.
+    /// Código de autorización cuando lo que sale supera el umbral. Es la misma
+    /// regla que una merma suelta: sin ella, desarmar era la forma de mermar
+    /// caro sin pedir permiso.
     /// </summary>
-    public AutorizacionRequest? Autorizacion { get; set; }
+    public AutorizacionCodigoRequest? Autorizacion { get; set; }
 }
 
 public class LineaDesarmeRequest

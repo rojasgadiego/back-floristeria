@@ -66,20 +66,21 @@ public class VentaLineaRequest
 }
 
 /// <summary>
-/// Autorización por credenciales de administrador (mermas y otros flujos).
-/// </summary>
-public class AutorizacionRequest
-{
-    public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Autorización por código de un solo uso enviado al admin por correo (ventas).
+/// Autorización por código de un solo uso enviado al admin por correo
+/// (descuentos de la venta y mermas sobre el umbral).
 /// </summary>
 public class AutorizacionCodigoRequest
 {
     public string Codigo { get; set; } = string.Empty;
+}
+
+public class SolicitarCodigoMermaRequest
+{
+    /// <summary>
+    /// Lo que la pantalla estima que vale la merma. Solo va en el correo para
+    /// que quien dicta el código sepa qué aprueba; el umbral lo aplica la base.
+    /// </summary>
+    public int Valor { get; set; }
 }
 
 public class SolicitarCodigoDescuentoRequest

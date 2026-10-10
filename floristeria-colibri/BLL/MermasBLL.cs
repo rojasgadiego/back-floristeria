@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Colibri.Api.Auth;
 using Colibri.Api.Correo;
 using Colibri.Api.DAL;
@@ -13,18 +14,22 @@ public class MermasBLL
 {
     private readonly MermasDAL _dal;
 
-    /// <summary>Para verificar la firma de quien autoriza. BCrypt vive en C#.</summary>
+    /// <summary>Para poner nombre a quien registra (el correo del código, la firma de la admin).</summary>
     private readonly AccesoDAL _acceso;
 
     private readonly AvisosCorreo _avisos;
     private readonly ILogger<MermasBLL> _log;
+    private readonly LimiteIntentos _limite;
 
-    public MermasBLL(MermasDAL dal, AccesoDAL acceso, AvisosCorreo avisos, ILogger<MermasBLL> log)
+    public MermasBLL(
+        MermasDAL dal, AccesoDAL acceso, AvisosCorreo avisos, ILogger<MermasBLL> log,
+        LimiteIntentos limite)
     {
         _dal = dal;
         _acceso = acceso;
         _avisos = avisos;
         _log = log;
+        _limite = limite;
     }
 
     // ============================================================
@@ -178,11 +183,9 @@ public class MermasBLL
     // ============================================================
 
     /// <summary>
-    /// Registra la merma, verificando la firma cuando el monto la necesita.
-    ///
-    /// La firma se comprueba ACÁ y no en el SP porque BCrypt vive en C#. El SP
-    /// solo exige que la merma cara venga firmada; quién puede firmar lo
-    /// decide VerificarAutorizacion, y hoy solo un admin.
+    /// Registra la merma, verificando la autorización cuando el monto la
+    /// necesita. El SP solo exige que la merma cara venga firmada; qué cuenta
+    /// como firma lo decide VerificarAutorizacion.
     /// </summary>
     /// <param name="soloMostrador">
     /// true para el vendedor: puede registrar, pero solo mermas de una partida
@@ -190,7 +193,7 @@ public class MermasBLL
     /// </param>
     public async Task<ResultadoOp<Merma>> Registrar(
         RegistrarMermaRequest r, int usuarioId, bool soloMostrador = false,
-        CancellationToken ct = default)
+        bool esAdmin = false, CancellationToken ct = default)
     {
         if (usuarioId <= 0) return ResultadoOp<Merma>.Error("Sesión inválida.");
         if (soloMostrador && r.PartidaId is null) return ResultadoOp<Merma>.Error(SoloMostrador);
@@ -217,14 +220,15 @@ public class MermasBLL
                 return ResultadoOp<Merma>.Error("Indica en qué estado vuelve la flor.");
         }
 
-        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, ct);
+        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
         if (errorAuth is not null) return ResultadoOp<Merma>.Error(errorAuth);
 
         var (id, error) = await _dal.Registrar(r, autorizadoPor, usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
 
-        // Con firma = sobre el umbral: eso es lo que se avisa.
-        if (autorizadoPor is not null) _avisos.MermaRegistrada(id);
+        // Con código = sobre el umbral: eso es lo que se avisa. La merma de
+        // una admin no: la firmó ella misma y avisarle sería ruido.
+        if (autorizadoPor is not null && !esAdmin) _avisos.MermaRegistrada(id);
 
         var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
@@ -233,20 +237,21 @@ public class MermasBLL
     }
 
     public async Task<ResultadoOp<Merma>> DescartarLote(
-        int loteId, DescartarLoteRequest r, int usuarioId, CancellationToken ct = default)
+        int loteId, DescartarLoteRequest r, int usuarioId, bool esAdmin = false,
+        CancellationToken ct = default)
     {
         if (loteId <= 0) return ResultadoOp<Merma>.Error("Indica el lote.");
 
         if (string.IsNullOrWhiteSpace(r.Motivo))
             return ResultadoOp<Merma>.Error("Indica por qué se descarta el lote.");
 
-        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, ct);
+        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
         if (errorAuth is not null) return ResultadoOp<Merma>.Error(errorAuth);
 
         var (id, error) = await _dal.DescartarLote(loteId, r, autorizadoPor, usuarioId, ct);
         if (!string.IsNullOrWhiteSpace(error)) return ResultadoOp<Merma>.Error(error);
 
-        if (autorizadoPor is not null) _avisos.MermaRegistrada(id);
+        if (autorizadoPor is not null && !esAdmin) _avisos.MermaRegistrada(id);
 
         var merma = await _dal.ConsultarUna(id, null, ct);
         return merma is null
@@ -278,33 +283,61 @@ public class MermasBLL
     }
 
     /// <summary>
-    /// Devuelve el nombre de quien firmó, o el error si las credenciales no
-    /// sirven. Null en las dos posiciones significa que no venía firma, y eso
-    /// lo resuelve el SP: si el monto la necesitaba, rechaza.
-    ///
-    /// Solo un admin autoriza. Si un vendedor pudiera firmar la merma de otro
-    /// vendedor, el umbral no serviría de nada: dos personas que se ponen de
-    /// acuerdo son exactamente el caso que este control busca frenar.
+    /// Pide el código de autorización: lo genera, lo guarda ligado a quien lo
+    /// pide y lo manda por correo a la administración, que se lo dicta.
     /// </summary>
-    private async Task<(string? Nombre, string? Error)> VerificarAutorizacion(
-        AutorizacionRequest? aut, CancellationToken ct)
+    public async Task<ResultadoOp<string>> SolicitarCodigo(
+        int valor, int usuarioId, CancellationToken ct = default)
     {
-        if (aut is null || string.IsNullOrWhiteSpace(aut.Email)) return (null, null);
+        if (usuarioId <= 0) return ResultadoOp<string>.Error("Sesión inválida.");
+        if (valor <= 0) return ResultadoOp<string>.Error("Indica cuánto vale la merma.");
 
-        var quien = await _acceso.BuscarParaLogin(aut.Email.Trim(), ct);
+        var codigo = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        var quien = await _acceso.ConsultarUsuario(usuarioId, ct);
 
-        if (quien is null || !PasswordHasher.Verificar(aut.Password, quien.PasswordHash))
+        await _dal.GuardarCodigo(codigo, valor, usuarioId, ct);
+        _avisos.CodigoMermaSolicitado(codigo, valor, quien?.Nombre ?? $"usuario {usuarioId}");
+
+        return ResultadoOp<string>.Exito("Código enviado a la administración por correo.");
+    }
+
+    /// <summary>
+    /// Devuelve qué queda anotado como firma, o el error si el código no
+    /// sirve. Null en las dos posiciones es "sin firma": si el monto la
+    /// necesitaba, el SP rechaza.
+    ///
+    /// Una administradora no necesita código: es ella quien lo dictaría.
+    /// Para el resto, el código llega por correo a la administración y solo
+    /// sirve en la sesión de quien lo pidió; con cinco intentos fallidos la
+    /// persona queda bloqueada un rato, y así no se puede adivinar.
+    ///
+    /// Antes se pedía el correo y la contraseña de la admin, escritos en el
+    /// teléfono del vendedor; además el mensaje de error confirmaba si una
+    /// clave ajena era correcta.
+    /// </summary>
+    private async Task<(string? Firma, string? Error)> VerificarAutorizacion(
+        AutorizacionCodigoRequest? aut, int usuarioId, bool esAdmin, CancellationToken ct)
+    {
+        if (esAdmin)
         {
-            _log.LogWarning("Autorización de merma fallida para {Email}", aut.Email);
-            return (null, "La clave de autorización no es correcta.");
+            var admin = await _acceso.ConsultarUsuario(usuarioId, ct);
+            return (admin?.Nombre ?? "Administración", null);
         }
 
-        if (!quien.Activo) return (null, "Esa cuenta está desactivada.");
+        if (aut is null || string.IsNullOrWhiteSpace(aut.Codigo)) return (null, null);
 
-        if (quien.Rol != RolUsuario.admin)
-            return (null, $"{quien.Nombre} no puede autorizar mermas. Pide a una administradora.");
+        var clave = "codigo-merma:" + usuarioId;
+        if (_limite.Bloqueado(clave) is { } resta) return (null, LimiteIntentos.Mensaje(resta));
 
-        return (quien.Nombre, null);
+        if (!await _dal.UsarCodigo(aut.Codigo.Trim(), usuarioId, ct))
+        {
+            _limite.Fallo(clave);
+            _log.LogWarning("Código de merma inválido del usuario {Usuario}", usuarioId);
+            return (null, "El código es incorrecto, ya se usó o venció. Pide uno nuevo.");
+        }
+
+        _limite.Exito(clave);
+        return ("Código por correo", null);
     }
 
     // ============================================================
@@ -316,7 +349,8 @@ public class MermasBLL
         => productoId <= 0 ? [] : await _dal.PlanDesarme(productoId, Math.Max(cantidad, 1), ct);
 
     public async Task<ResultadoOp<ResultadoDesarme>> Desarmar(
-        int productoId, DesarmeRequest r, int usuarioId, CancellationToken ct = default)
+        int productoId, DesarmeRequest r, int usuarioId, bool esAdmin = false,
+        CancellationToken ct = default)
     {
         if (productoId <= 0) return ResultadoOp<ResultadoDesarme>.Error("Indica el producto.");
         if (r.Cantidad < 1) return ResultadoOp<ResultadoDesarme>.Error("Indica cuántas unidades desarmar.");
@@ -331,7 +365,7 @@ public class MermasBLL
         if (r.Lineas.Any(l => l.Recuperadas < 0 || l.Perdidas < 0))
             return ResultadoOp<ResultadoDesarme>.Error("Las cantidades no pueden ser negativas.");
 
-        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, ct);
+        var (autorizadoPor, errorAuth) = await VerificarAutorizacion(r.Autorizacion, usuarioId, esAdmin, ct);
         if (errorAuth is not null) return ResultadoOp<ResultadoDesarme>.Error(errorAuth);
 
         // Que la suma cuadre con la receta lo valida el SP: es él quien sabe

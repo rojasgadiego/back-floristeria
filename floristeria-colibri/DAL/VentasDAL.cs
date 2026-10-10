@@ -183,22 +183,23 @@ public class VentasDAL
             new { codigo, descuento, vendedorId }, ct);
 
     /// <summary>
-    /// Marca el código como usado si es válido (no expirado, monto coincide).
-    /// Devuelve true si fue válido y se consumió.
+    /// Marca el código como usado si es válido (no expirado, monto coincide,
+    /// y lo pidió esta misma persona). Devuelve true si fue válido y se consumió.
     /// </summary>
     public async Task<bool> ValidarYUsarCodigoDescuento(
-        string codigo, int descuento, CancellationToken ct = default)
+        string codigo, int descuento, int vendedorId, CancellationToken ct = default)
     {
         var filas = await _db.Ejecutar(
             """
             UPDATE codigos_autorizacion_descuento
                SET usado = TRUE
-             WHERE codigo    = @codigo
-               AND descuento = @descuento
+             WHERE codigo      = @codigo
+               AND descuento   = @descuento
+               AND vendedor_id = @vendedorId
                AND NOT usado
                AND expira_en > now()
             """,
-            new { codigo, descuento }, ct);
+            new { codigo, descuento, vendedorId }, ct);
         return filas > 0;
     }
 }

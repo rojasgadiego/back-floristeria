@@ -57,6 +57,9 @@ SqlMapper.AddTypeHandler(TimeOnlyHandler.Instancia);
 // ─── 3. Capas ────────────────────────────────────────────────
 builder.Services.AddSingleton<IAccesoDatos, AccesoDatosPostgres>();
 
+// Singleton: los intentos fallidos tienen que sobrevivir entre peticiones.
+builder.Services.AddSingleton<LimiteIntentos>();
+
 builder.Services.AddScoped<AccesoDAL>();
 builder.Services.AddScoped<AccesoBLL>();
 builder.Services.AddScoped<InventarioDAL>();
