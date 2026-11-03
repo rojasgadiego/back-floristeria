@@ -325,6 +325,7 @@ public class AccesoBLL
             "dashboard",
             "pos",
             "ventas",
+            "despachos",
             "cotizaciones",
             "clientes",
             "inventario",

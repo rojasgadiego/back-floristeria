@@ -67,6 +67,13 @@ public class VentasBLL
                 return ResultadoOp<VentaDetalle>.Error("Indica la dirección de entrega.");
             if (r.DespachoValor < 0)
                 return ResultadoOp<VentaDetalle>.Error("El valor del despacho no puede ser negativo.");
+            if (!string.IsNullOrWhiteSpace(r.DespachoHora)
+                && !TimeOnly.TryParseExact(r.DespachoHora, "HH:mm", out _))
+                return ResultadoOp<VentaDetalle>.Error("La hora de entrega no es válida.");
+            if (r.DespachoMensaje?.Length > 500)
+                return ResultadoOp<VentaDetalle>.Error("El mensaje de la tarjeta admite hasta 500 caracteres.");
+            if (r.DespachoIndicaciones?.Length > 300)
+                return ResultadoOp<VentaDetalle>.Error("Las indicaciones admiten hasta 300 caracteres.");
         }
 
         // ─── La autorización ───
@@ -146,6 +153,19 @@ public class VentasBLL
     // ============================================================
     // Consultas
     // ============================================================
+
+    public Task<IEnumerable<Despacho>> Despachos(DateOnly? fecha, CancellationToken ct = default)
+        => _dal.ConsultarDespachos(fecha, ct);
+
+    public async Task<string> CambiarEstadoDespacho(
+        int ventaId, string estado, int usuarioId, CancellationToken ct = default)
+    {
+        if (usuarioId <= 0) return "Sesión inválida.";
+        if (estado is not ("pendiente" or "en_camino" or "entregado"))
+            return "Estado de despacho no válido.";
+
+        return await _dal.CambiarEstadoDespacho(ventaId, estado, usuarioId, ct);
+    }
 
     public async Task<ResultadoPagina<Venta>> Listar(
         VentaFiltro filtro, CancellationToken ct = default)

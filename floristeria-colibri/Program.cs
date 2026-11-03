@@ -246,6 +246,7 @@ new LotesEndpoints(Log<LotesEndpoints>()).MapEndpoints(app);
 new MostradorEndpoints(Log<MostradorEndpoints>()).MapEndpoints(app);
 new CajaEndpoints(Log<CajaEndpoints>()).MapEndpoints(app);
 new VentasEndpoints(Log<VentasEndpoints>()).MapEndpoints(app);
+new DespachosEndpoints(Log<DespachosEndpoints>()).MapEndpoints(app);
 new ConfiguracionEndpoints(Log<ConfiguracionEndpoints>()).MapEndpoints(app);
 new MermasEndpoints(Log<MermasEndpoints>()).MapEndpoints(app);
 new ClientesEndpoints(Log<ClientesEndpoints>()).MapEndpoints(app);

@@ -46,6 +46,27 @@ public class RegistrarVentaRequest
     /// línea de servicio "Despacho". 0 = gratis.
     /// </summary>
     public int DespachoValor { get; set; }
+
+    /// <summary>Día de entrega. Sin fecha se entrega hoy.</summary>
+    public DateOnly? DespachoFecha { get; set; }
+
+    /// <summary>
+    /// Hora acordada, "HH:mm". Opcional: no todo despacho tiene una. Es texto
+    /// porque el JSON no acepta "10:30" como TimeOnly, y eso es lo que manda
+    /// un input de hora del navegador.
+    /// </summary>
+    public string? DespachoHora { get; set; }
+
+    /// <summary>Lo que va escrito en la tarjeta.</summary>
+    public string? DespachoMensaje { get; set; }
+
+    /// <summary>Para el repartidor: "dejar en conserjería", "tocar timbre".</summary>
+    public string? DespachoIndicaciones { get; set; }
+}
+
+public class CambiarEstadoDespachoRequest
+{
+    public string Estado { get; set; } = string.Empty;
 }
 
 public class VentaLineaRequest

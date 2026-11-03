@@ -143,6 +143,34 @@ public class VentaItem
     public bool EsServicio { get; set; }
 }
 
+/// <summary>
+/// Una entrega, tal como la ve la pantalla de despachos. Sin montos a
+/// propósito: esa pantalla la usa cualquier vendedor.
+/// </summary>
+public class Despacho
+{
+    public int VentaId { get; set; }
+    public string Folio { get; set; } = string.Empty;
+    public string NumeroAtencion { get; set; } = string.Empty;
+    public DateOnly Fecha { get; set; }
+    public string? Hora { get; set; }
+    public string? Recibe { get; set; }
+    public string? Telefono { get; set; }
+    public string? Direccion { get; set; }
+    public string? Mensaje { get; set; }
+    public string? Indicaciones { get; set; }
+    public string Estado { get; set; } = string.Empty;
+    public DateTime? EstadoEn { get; set; }
+    public string? EstadoPor { get; set; }
+    public string? Cliente { get; set; }
+
+    /// <summary>Una línea por producto: "2 × Ramo primavera".</summary>
+    public string? Productos { get; set; }
+
+    /// <summary>Era para un día anterior y sigue sin entregarse.</summary>
+    public bool Atrasado { get; set; }
+}
+
 public class VentaConsumo
 {
     public int Id { get; set; }

@@ -65,6 +65,12 @@ public class VentasDAL
             p.Add("DespachoRecibe", r.DespachoRecibe);
             p.Add("DespachoTelefono", r.DespachoTelefono);
             p.Add("DespachoValor", r.DespachoValor);
+            // Como texto y con cast en el SQL: así no depende de cómo Dapper
+            // mapee DateOnly? al armar los parámetros.
+            p.Add("DespachoFecha", r.DespachoFecha?.ToString("yyyy-MM-dd"));
+            p.Add("DespachoHora", string.IsNullOrWhiteSpace(r.DespachoHora) ? null : r.DespachoHora);
+            p.Add("DespachoMensaje", r.DespachoMensaje);
+            p.Add("DespachoIndicaciones", r.DespachoIndicaciones);
 
             var id = await _db.Escalar<int>(
                 """
@@ -73,7 +79,9 @@ public class VentasDAL
                     @ClienteId::int, @PromocionId::int, @DescuentoManual::int,
                     @PuntosCanjeados::int, @Recibido::int, @AutorizadoPor::text,
                     @CotizacionId::int, @EsDespacho::boolean, @DirDespacho::text,
-                    @DespachoRecibe::text, @DespachoTelefono::text, @DespachoValor::int)
+                    @DespachoRecibe::text, @DespachoTelefono::text, @DespachoValor::int,
+                    @DespachoFecha::date, @DespachoHora::time,
+                    @DespachoMensaje::text, @DespachoIndicaciones::text)
                 """,
                 p, ct);
 
@@ -113,6 +121,28 @@ public class VentasDAL
     // ============================================================
     // Consultas
     // ============================================================
+
+    public async Task<IEnumerable<Despacho>> ConsultarDespachos(
+        DateOnly? fecha, CancellationToken ct = default)
+        => await _db.ConsultarLista<Despacho>(
+            "SELECT * FROM sp_ven_c_despachos(@fecha::date)",
+            new { fecha = fecha?.ToString("yyyy-MM-dd") }, ct);
+
+    public async Task<string> CambiarEstadoDespacho(
+        int ventaId, string estado, int usuarioId, CancellationToken ct = default)
+    {
+        try
+        {
+            await _db.Escalar<int>(
+                "SELECT sp_ven_u_despacho_estado(@ventaId, @estado::estado_despacho, @usuarioId)",
+                new { ventaId, estado, usuarioId }, ct);
+            return string.Empty;
+        }
+        catch (PostgresException ex) when (ErroresPg.EsDeNegocio(ex))
+        {
+            return ErroresPg.Mensaje(ex);
+        }
+    }
 
     public async Task<IEnumerable<Venta>> ConsultarVentas(
         VentaFiltro f, CancellationToken ct = default)

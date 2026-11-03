@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict WQ8occa8xgm7FDCaCYtfgU76WadLqGaj4C9Kq0utauPtLLsXBJGxzCM2u6Xcbd6
+\restrict VAAfcFV27hrypchVefFPy0QEZUmrnhtOuJbUhW5GpTsurd5qWb8jDNaA8Y01vS4
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -18,13 +18,6 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
-
---
--- Name: public; Type: SCHEMA; Schema: -; Owner: -
---
-
--- *not* creating schema, since initdb creates it
-
 
 --
 -- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
@@ -124,6 +117,17 @@ CREATE TYPE public.estado_cotizacion AS ENUM (
     'aprobada',
     'cobrada',
     'anulada'
+);
+
+
+--
+-- Name: estado_despacho; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.estado_despacho AS ENUM (
+    'pendiente',
+    'en_camino',
+    'entregado'
 );
 
 
@@ -7338,6 +7342,39 @@ $$;
 
 
 --
+-- Name: sp_ven_c_despachos(date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_ven_c_despachos(p_fecha date DEFAULT NULL::date) RETURNS TABLE(venta_id integer, folio text, numero_atencion text, fecha date, hora text, recibe text, telefono text, direccion text, mensaje text, indicaciones text, estado text, estado_en timestamp with time zone, estado_por text, cliente text, productos text, atrasado boolean)
+    LANGUAGE sql STABLE
+    AS $$
+    WITH dia AS (SELECT COALESCE(p_fecha, CURRENT_DATE) AS d)
+    SELECT
+        v.id, v.folio, v.numero_atencion, v.despacho_fecha,
+        to_char(v.despacho_hora, 'HH24:MI'),
+        v.despacho_recibe, v.despacho_telefono, v.direccion_despacho,
+        v.despacho_mensaje, v.despacho_indicaciones,
+        v.despacho_estado::text, v.despacho_estado_en, u.nombre,
+        c.nombre,
+        (SELECT string_agg(i.cantidad || ' × ' || i.nombre, E'\n' ORDER BY i.id)
+           FROM venta_items i
+          WHERE i.venta_id = v.id AND NOT i.es_servicio),
+        v.despacho_fecha < CURRENT_DATE AND v.despacho_estado <> 'entregado'
+    FROM ventas v
+    CROSS JOIN dia
+    LEFT JOIN clientes c ON c.id = v.cliente_id
+    LEFT JOIN usuarios u ON u.id = v.despacho_estado_por
+    WHERE v.es_despacho
+      AND NOT v.anulada
+      AND (v.despacho_fecha = dia.d
+           OR (dia.d = CURRENT_DATE
+               AND v.despacho_fecha < dia.d
+               AND v.despacho_estado <> 'entregado'))
+    ORDER BY v.despacho_fecha, v.despacho_hora NULLS LAST, v.id;
+$$;
+
+
+--
 -- Name: sp_ven_c_partida(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8276,10 +8313,10 @@ $_$;
 
 
 --
--- Name: sp_ven_i_venta(jsonb, public.medio_pago, integer, integer, integer, integer, integer, integer, text, integer, boolean, text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_ven_i_venta(jsonb, public.medio_pago, integer, integer, integer, integer, integer, integer, text, integer, boolean, text, text, text, integer, date, time without time zone, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_ven_i_venta(p_items jsonb, p_medio_pago public.medio_pago, p_usuario_id integer, p_cliente_id integer DEFAULT NULL::integer, p_promocion_id integer DEFAULT NULL::integer, p_descuento_manual integer DEFAULT 0, p_puntos_canjeados integer DEFAULT 0, p_recibido integer DEFAULT NULL::integer, p_autorizado_por text DEFAULT NULL::text, p_cotizacion_id integer DEFAULT NULL::integer, p_es_despacho boolean DEFAULT false, p_dir_despacho text DEFAULT NULL::text, p_despacho_recibe text DEFAULT NULL::text, p_despacho_telefono text DEFAULT NULL::text, p_despacho_valor integer DEFAULT 0) RETURNS integer
+CREATE FUNCTION public.sp_ven_i_venta(p_items jsonb, p_medio_pago public.medio_pago, p_usuario_id integer, p_cliente_id integer DEFAULT NULL::integer, p_promocion_id integer DEFAULT NULL::integer, p_descuento_manual integer DEFAULT 0, p_puntos_canjeados integer DEFAULT 0, p_recibido integer DEFAULT NULL::integer, p_autorizado_por text DEFAULT NULL::text, p_cotizacion_id integer DEFAULT NULL::integer, p_es_despacho boolean DEFAULT false, p_dir_despacho text DEFAULT NULL::text, p_despacho_recibe text DEFAULT NULL::text, p_despacho_telefono text DEFAULT NULL::text, p_despacho_valor integer DEFAULT 0, p_despacho_fecha date DEFAULT NULL::date, p_despacho_hora time without time zone DEFAULT NULL::time without time zone, p_despacho_mensaje text DEFAULT NULL::text, p_despacho_indicaciones text DEFAULT NULL::text) RETURNS integer
     LANGUAGE plpgsql
     AS $_$
 DECLARE
@@ -8359,6 +8396,18 @@ BEGIN
         p_despacho_recibe    := NULL;
         p_despacho_telefono  := NULL;
         p_despacho_valor     := 0;
+        p_despacho_fecha     := NULL;
+        p_despacho_hora      := NULL;
+        p_despacho_mensaje   := NULL;
+        p_despacho_indicaciones := NULL;
+    ELSE
+        -- Sin fecha, se entrega hoy: el backend que aún no la manda sigue
+        -- creando despachos válidos mientras se redespliega.
+        p_despacho_fecha := COALESCE(p_despacho_fecha, CURRENT_DATE);
+
+        IF p_despacho_fecha < CURRENT_DATE THEN
+            RAISE EXCEPTION 'La fecha de entrega no puede ser anterior a hoy.';
+        END IF;
     END IF;
 
     IF COALESCE(p_despacho_valor, 0) < 0 THEN
@@ -8382,7 +8431,9 @@ BEGIN
         bruto, descuento_promo, descuento_manual, descuento_canje,
         descuento_total, neto, iva_monto, total,
         es_despacho, direccion_despacho,
-        despacho_recibe, despacho_telefono, despacho_valor
+        despacho_recibe, despacho_telefono, despacho_valor,
+        despacho_fecha, despacho_hora, despacho_mensaje,
+        despacho_indicaciones, despacho_estado
     )
     VALUES (
         v_folio, v_atencion, v_caja, p_usuario_id, p_cliente_id,
@@ -8392,7 +8443,12 @@ BEGIN
         NULLIF(BTRIM(COALESCE(p_dir_despacho, '')), ''),
         NULLIF(BTRIM(COALESCE(p_despacho_recibe, '')), ''),
         NULLIF(BTRIM(COALESCE(p_despacho_telefono, '')), ''),
-        COALESCE(p_despacho_valor, 0)
+        COALESCE(p_despacho_valor, 0),
+        p_despacho_fecha, p_despacho_hora,
+        NULLIF(BTRIM(COALESCE(p_despacho_mensaje, '')), ''),
+        NULLIF(BTRIM(COALESCE(p_despacho_indicaciones, '')), ''),
+        CASE WHEN COALESCE(p_es_despacho, FALSE)
+             THEN 'pendiente'::estado_despacho END
     )
     RETURNING id INTO v_venta;
 
@@ -8774,6 +8830,39 @@ BEGIN
     WHERE id = v_id;
 
     RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: sp_ven_u_despacho_estado(integer, public.estado_despacho, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_ven_u_despacho_estado(p_venta_id integer, p_estado public.estado_despacho, p_usuario_id integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_despacho boolean;
+    v_anulada  boolean;
+BEGIN
+    SELECT es_despacho, anulada INTO v_despacho, v_anulada
+      FROM ventas WHERE id = p_venta_id FOR UPDATE;
+
+    IF NOT FOUND OR NOT v_despacho THEN
+        RAISE EXCEPTION 'El despacho no existe.';
+    END IF;
+
+    IF v_anulada THEN
+        RAISE EXCEPTION 'La venta está anulada: su despacho ya no se entrega.';
+    END IF;
+
+    UPDATE ventas
+       SET despacho_estado = p_estado,
+           despacho_estado_en = now(),
+           despacho_estado_por = p_usuario_id
+     WHERE id = p_venta_id;
+
+    RETURN p_venta_id;
 END;
 $$;
 
@@ -10293,12 +10382,20 @@ CREATE TABLE public.ventas (
     despacho_recibe text,
     despacho_telefono text,
     despacho_valor integer DEFAULT 0 NOT NULL,
+    despacho_fecha date,
+    despacho_hora time without time zone,
+    despacho_mensaje text,
+    despacho_indicaciones text,
+    despacho_estado public.estado_despacho,
+    despacho_estado_en timestamp with time zone,
+    despacho_estado_por integer,
     CONSTRAINT ventas_abono_no_negativo CHECK ((abono_previo >= 0)),
     CONSTRAINT ventas_abono_no_supera CHECK ((abono_previo <= (bruto - descuento_total))),
     CONSTRAINT ventas_anulacion_completa CHECK (((NOT anulada) OR ((motivo_anulacion IS NOT NULL) AND (length(TRIM(BOTH FROM motivo_anulacion)) > 0) AND (anulada_en IS NOT NULL)))),
     CONSTRAINT ventas_descuento_cuadra CHECK ((descuento_total = ((descuento_promo + descuento_manual) + descuento_canje))),
     CONSTRAINT ventas_descuento_no_supera_bruto CHECK ((descuento_total <= bruto)),
     CONSTRAINT ventas_desglose_cuadra CHECK ((total = (neto + iva_monto))),
+    CONSTRAINT ventas_despacho_completo CHECK (((NOT es_despacho) OR ((despacho_fecha IS NOT NULL) AND (despacho_estado IS NOT NULL)))),
     CONSTRAINT ventas_despacho_valor_no_negativo CHECK ((despacho_valor >= 0)),
     CONSTRAINT ventas_efectivo_alcanza CHECK (((medio_pago <> 'efectivo'::public.medio_pago) OR (recibido IS NULL) OR (recibido >= total))),
     CONSTRAINT ventas_montos_no_negativos CHECK (((bruto >= 0) AND (total >= 0) AND (neto >= 0) AND (iva_monto >= 0) AND (descuento_promo >= 0) AND (descuento_manual >= 0) AND (descuento_canje >= 0))),
@@ -11902,6 +11999,13 @@ CREATE INDEX ventas_cliente_idx ON public.ventas USING btree (cliente_id) WHERE 
 
 
 --
+-- Name: ventas_despachos_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ventas_despachos_idx ON public.ventas USING btree (despacho_fecha) WHERE (es_despacho AND (NOT anulada));
+
+
+--
 -- Name: ventas_fecha_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12513,6 +12617,14 @@ ALTER TABLE ONLY public.ventas
 
 
 --
+-- Name: ventas ventas_despacho_estado_por_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ventas
+    ADD CONSTRAINT ventas_despacho_estado_por_fkey FOREIGN KEY (despacho_estado_por) REFERENCES public.usuarios(id) ON DELETE SET NULL;
+
+
+--
 -- Name: ventas ventas_promocion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12532,5 +12644,5 @@ ALTER TABLE ONLY public.ventas
 -- PostgreSQL database dump complete
 --
 
-\unrestrict WQ8occa8xgm7FDCaCYtfgU76WadLqGaj4C9Kq0utauPtLLsXBJGxzCM2u6Xcbd6
+\unrestrict VAAfcFV27hrypchVefFPy0QEZUmrnhtOuJbUhW5GpTsurd5qWb8jDNaA8Y01vS4
 
